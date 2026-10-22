@@ -1,0 +1,122 @@
+{
+  "version": 1,
+  "vad": {
+    "url": "https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v6.2.0.bin",
+    "file_name": "ggml-silero-v6.2.0.bin",
+    "sha256": "2aa269b785eeb53a82983a20501ddf7c1d9c48e33ab63a41391ac6c9f7fb6987",
+    "size": 885098
+  },
+  "models": [
+    {
+      "id": "whisper-large-v3-turbo-q5_0",
+      "engine": "whisper",
+      "display_name": "Whisper Large v3 Turbo (Q5)",
+      "file": {
+        "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin",
+        "file_name": "ggml-large-v3-turbo-q5_0.bin",
+        "sha256": "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2",
+        "size": 574041195
+      },
+      "languages": [
+        "*"
+      ],
+      "ram_mb": 1100,
+      "vram_mb": 1500,
+      "speed": 4,
+      "accuracy": 5,
+      "supports_prompt": true,
+      "reduced_audio_ctx": false,
+      "recommended_for": [
+        "gpu"
+      ]
+    },
+    {
+      "id": "whisper-large-v3-turbo-q8_0",
+      "engine": "whisper",
+      "display_name": "Whisper Large v3 Turbo (Q8)",
+      "file": {
+        "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q8_0.bin",
+        "file_name": "ggml-large-v3-turbo-q8_0.bin",
+        "sha256": "317eb69c11673c9de1e1f0d459b253999804ec71ac4c23c17ecf5fbe24e259a1",
+        "size": 874188075
+      },
+      "languages": [
+        "*"
+      ],
+      "ram_mb": 1400,
+      "vram_mb": 2000,
+      "speed": 3,
+      "accuracy": 5,
+      "supports_prompt": true,
+      "reduced_audio_ctx": false,
+      "recommended_for": []
+    },
+    {
+      "id": "whisper-large-v3-french-distil-q5_0",
+      "engine": "whisper",
+      "display_name": "Whisper Large v3 French Distil (Q5)",
+      "file": {
+        "url": "https://huggingface.co/bofenghuang/whisper-large-v3-french-distil-dec16/resolve/main/ggml-model-q5_0.bin",
+        "file_name": "ggml-large-v3-french-distil-dec16-q5_0.bin",
+        "sha256": "a804330f5cd369fb7447ad2935eb7bf5b1d628ba246a067255ac70775df720e4",
+        "size": 791369259
+      },
+      "languages": [
+        "fr"
+      ],
+      "ram_mb": 1600,
+      "vram_mb": 1700,
+      "speed": 3,
+      "accuracy": 5,
+      "supports_prompt": true,
+      "reduced_audio_ctx": false,
+      "recommended_for": []
+    },
+    {
+      "id": "whisper-small-q5_1",
+      "engine": "whisper",
+      "display_name": "Whisper Small (Q5)",
+      "file": {
+        "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin",
+        "file_name": "ggml-small-q5_1.bin",
+        "sha256": "ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb",
+        "size": 190085487
+      },
+      "languages": [
+        "*"
+      ],
+      "ram_mb": 650,
+      "vram_mb": 500,
+      "speed": 4,
+      "accuracy": 4,
+      "supports_prompt": true,
+      "reduced_audio_ctx": true,
+      "recommended_for": [
+        "cpu_strong"
+      ]
+    },
+    {
+      "id": "whisper-base-q5_1",
+      "engine": "whisper",
+      "display_name": "Whisper Base (Q5)",
+      "file": {
+        "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base-q5_1.bin",
+        "file_name": "ggml-base-q5_1.bin",
+        "sha256": "422f1ae452ade6f30a004d7e5c6a43195e4433bc370bf23fac9cc591f01a8898",
+        "size": 59707625
+      },
+      "languages": [
+        "*"
+      ],
+      "ram_mb": 350,
+      "vram_mb": 300,
+      "speed": 5,
+      "accuracy": 3,
+      "supports_prompt": true,
+      "reduced_audio_ctx": true,
+      "recommended_for": [
+        "cpu_weak"
+      ]
+    }
+  ]
+}

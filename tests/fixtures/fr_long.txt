@@ -1,0 +1,1 @@
+La dictée vocale permet d'écrire un texte sans utiliser le clavier. Il suffit d'appuyer sur un raccourci, de parler naturellement, puis de relâcher la touche. Le texte apparaît alors à l'endroit où se trouve le curseur, dans n'importe quelle application.

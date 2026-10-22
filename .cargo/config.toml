@@ -1,0 +1,3 @@
+[env]
+# MSBuild hits MAX_PATH inside whisper.cpp's nested Vulkan shader build; Ninja does not.
+CMAKE_GENERATOR = "Ninja"

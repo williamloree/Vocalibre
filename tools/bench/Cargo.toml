@@ -1,0 +1,11 @@
+[package]
+name = "bench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+whisper-rs = { version = "=0.16.0", features = ["vulkan"] }
+hound = "=3.5.1"
+memory-stats = "=1.2.0"
