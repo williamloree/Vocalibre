@@ -1,3 +1,4 @@
+pub mod download;
 pub mod manifest;
 
 use std::path::Path;

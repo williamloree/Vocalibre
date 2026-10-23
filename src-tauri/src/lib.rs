@@ -58,6 +58,8 @@ pub fn run() {
             commands::list_models,
             commands::select_model,
             commands::delete_model,
+            commands::download_model,
+            commands::cancel_download,
             commands::benchmark,
             commands::list_microphones,
             commands::get_history,

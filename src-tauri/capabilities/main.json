@@ -16,6 +16,8 @@
     "allow-list-models",
     "allow-select-model",
     "allow-delete-model",
+    "allow-download-model",
+    "allow-cancel-download",
     "allow-benchmark",
     "allow-list-microphones",
     "allow-get-history",

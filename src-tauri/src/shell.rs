@@ -15,7 +15,7 @@ use tauri::{
 };
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
 
-use crate::app::actor::{Changed, Shell, View};
+use crate::app::actor::{Changed, DownloadEvent, Shell, View};
 use crate::app::state::{AppState, Notice};
 use crate::i18n::{self, Lang};
 use crate::settings::{OverlayPosition, Shortcuts};
@@ -389,6 +389,10 @@ impl Shell for TauriShell {
             Changed::History => "history-changed",
         };
         let _ = self.app.emit_to(MAIN, event, ());
+    }
+
+    fn download(&self, event: &DownloadEvent) {
+        let _ = self.app.emit_to(MAIN, "download", event);
     }
 }
 

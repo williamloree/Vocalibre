@@ -31,6 +31,7 @@ function useErrorText() {
       if (msg.startsWith("invalid:")) return t("errors.invalid", { fields: msg.slice(8) });
       if (msg.startsWith("hotkey:")) return t("errors.hotkey", { detail: msg.slice(7) });
       if (msg === "busy") return t("errors.busy");
+      if (msg === "download_busy") return t("errors.download_busy");
       return t("errors.generic", { detail: msg });
     },
     [t],

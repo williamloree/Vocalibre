@@ -460,6 +460,23 @@ kbd.pending {
   background: var(--accent);
 }
 
+.download {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-start;
+}
+
+.download progress {
+  width: 100%;
+  height: 8px;
+  accent-color: var(--accent);
+}
+
+.download .hint {
+  margin: 0;
+}
+
 .bench {
   margin: 0;
   font-size: 13px;

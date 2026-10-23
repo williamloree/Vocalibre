@@ -75,6 +75,16 @@ pub async fn delete_model(tx: State<'_, ActorTx>, id: String) -> Result<(), Stri
 }
 
 #[tauri::command]
+pub async fn download_model(tx: State<'_, ActorTx>, id: String) -> Result<(), String> {
+    ask(&tx, |r| Msg::Download(id, r)).await?
+}
+
+#[tauri::command]
+pub fn cancel_download(tx: State<'_, ActorTx>) -> Result<(), String> {
+    tell(&tx, Msg::CancelDownload)
+}
+
+#[tauri::command]
 pub async fn benchmark(tx: State<'_, ActorTx>) -> Result<BenchResult, String> {
     ask(&tx, Msg::Benchmark).await?
 }

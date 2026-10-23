@@ -65,9 +65,8 @@ Téléchargez l'installeur de votre système dans les [Releases](https://github.
 | **macOS 11+** Intel | `Vocalibre_x.y.z_x64.dmg` | Idem. |
 | **Linux** | `.AppImage`, `.deb`, `.rpm` | Raccourci global et collage sous X11. Mises à jour automatiques avec l'AppImage. |
 
-> [!IMPORTANT]
-> Le téléchargement des modèles depuis l'application arrive avec l'assistant de premier lancement. En
-> attendant, placez les fichiers vous-même comme expliqué dans [Modèles](#modèles).
+Au premier lancement, ouvrez *Paramètres* › *Modèles* et téléchargez un modèle (voir [Modèles](#modèles)) :
+il devient actif dès la fin du téléchargement.
 
 **Mises à jour.** Au démarrage puis une fois par jour, Vocalibre regarde si une nouvelle version est publiée ici
 et propose de l'installer ; elle redémarre ensuite toute seule. Les paquets sont signés et vérifiés avant
@@ -91,10 +90,12 @@ Un enregistrement de moins de 0,3 s est ignoré (appui accidentel). Une dictée 
 
 ## Modèles
 
-Les modèles se placent dans le dossier des modèles (*Paramètres* › *Modèles* › *Ouvrir le dossier*).
-Il faut toujours le modèle de détection de voix
-[`ggml-silero-v6.2.0.bin`](https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v6.2.0.bin),
-plus au moins un modèle Whisper :
+Les modèles se téléchargent depuis *Paramètres* › *Modèles*, avec le petit modèle de détection de voix
+qui les accompagne. Un téléchargement coupé reprend où il s'est arrêté ; chaque fichier est vérifié
+(SHA-256) avant d'être utilisé. Hors ligne, déposez les fichiers vous-même dans le dossier des modèles
+(*Ouvrir le dossier*) : le modèle de détection de voix
+[`ggml-silero-v6.2.0.bin`](https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v6.2.0.bin)
+et au moins un modèle Whisper :
 
 | Modèle | Taille | Pour | Phrase de 4 s transcrite en |
 |---|---|---|---|

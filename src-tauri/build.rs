@@ -10,6 +10,8 @@ const COMMANDS: &[&str] = &[
     "list_models",
     "select_model",
     "delete_model",
+    "download_model",
+    "cancel_download",
     "benchmark",
     "list_microphones",
     "get_history",

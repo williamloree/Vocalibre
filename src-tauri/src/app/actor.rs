@@ -4,6 +4,7 @@
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -16,7 +17,8 @@ use crate::audio::{Audio, AudioEvent};
 use crate::history::{self, History};
 use crate::i18n::{self, Lang};
 use crate::injection::{self, Injector, LastInjection};
-use crate::models::manifest::{Manifest, ModelInfo};
+use crate::models::download::{self, DownloadError};
+use crate::models::manifest::{Manifest, ModelInfo, RemoteFile};
 use crate::models::{self};
 use crate::settings::{self, Acceleration, OverlayPosition, Settings, Shortcuts};
 use crate::sound::Player;
@@ -42,6 +44,17 @@ pub enum Changed {
     History,
 }
 
+/// Progress of the model download, for the UI.
+#[derive(Debug, Clone, Serialize)]
+pub struct DownloadEvent {
+    pub model_id: String,
+    pub downloaded: u64,
+    pub total: u64,
+    pub done: bool,
+    /// Error code (see [`DownloadError::code`]) when `done` without success.
+    pub error: Option<String>,
+}
+
 /// What the actor needs from the desktop shell (tray, windows, hotkeys).
 pub trait Shell: Send + 'static {
     fn state_changed(&self, state: &AppState);
@@ -56,6 +69,7 @@ pub trait Shell: Send + 'static {
     /// Settings, installed models or the active model changed.
     fn refresh(&self, view: &View<'_>);
     fn changed(&self, what: Changed);
+    fn download(&self, event: &DownloadEvent);
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -81,6 +95,8 @@ pub struct ModelEntry {
     pub info: ModelInfo,
     pub installed: bool,
     pub active: bool,
+    /// Bytes so far and total, while downloading.
+    pub download: Option<(u64, u64)>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -125,6 +141,21 @@ pub enum Msg {
         monitor: String,
         position: OverlayPosition,
     },
+    /// Errors: `download_busy` (one download at a time), `unknown model`.
+    Download(String, Reply<Result<(), String>>),
+    CancelDownload,
+    DownloadProgress {
+        downloaded: u64,
+    },
+    DownloadFinished(Result<(), DownloadError>),
+}
+
+/// The model download in progress (one at a time: the VAD file is shared).
+struct ActiveDownload {
+    model_id: String,
+    downloaded: u64,
+    total: u64,
+    cancel: Arc<AtomicBool>,
 }
 
 pub type ActorTx = mpsc::UnboundedSender<Msg>;
@@ -164,6 +195,7 @@ pub struct Actor<S: Shell> {
     /// Last dictated text, in memory only (kept even with history off).
     last_text: Option<String>,
     auto_stop: Option<JoinHandle<()>>,
+    download: Option<ActiveDownload>,
     epoch: Instant,
     shell: S,
 }
@@ -196,6 +228,7 @@ impl<S: Shell> Actor<S> {
             last_injection: None,
             last_text: None,
             auto_stop: None,
+            download: None,
             epoch: Instant::now(),
             shell,
         };
@@ -299,6 +332,28 @@ impl<S: Shell> Actor<S> {
                 self.save_settings();
                 self.refresh_shell();
             }
+            Msg::Download(id, reply) => {
+                let _ = reply.send(self.start_download(&id));
+            }
+            Msg::CancelDownload => {
+                if let Some(d) = &self.download {
+                    d.cancel.store(true, Ordering::Relaxed);
+                }
+            }
+            Msg::DownloadProgress { downloaded } => {
+                if let Some(d) = &mut self.download {
+                    d.downloaded = downloaded;
+                    let event = DownloadEvent {
+                        model_id: d.model_id.clone(),
+                        downloaded,
+                        total: d.total,
+                        done: false,
+                        error: None,
+                    };
+                    self.shell.download(&event);
+                }
+            }
+            Msg::DownloadFinished(result) => self.on_download_finished(result).await,
         }
     }
 
@@ -474,6 +529,9 @@ impl<S: Shell> Actor<S> {
             }
             self.hotkey_error = None;
         }
+        if new.models_dir != old.models_dir && self.download.is_some() {
+            return Err("busy".into());
+        }
         let reload = new.acceleration != old.acceleration || new.models_dir != old.models_dir;
         self.settings = new;
         self.save_settings();
@@ -486,8 +544,70 @@ impl<S: Shell> Actor<S> {
         Ok(self.settings.clone())
     }
 
+    /// Downloads the model and, if missing, the VAD file. The first model
+    /// downloaded becomes the active one.
+    fn start_download(&mut self, id: &str) -> Result<(), String> {
+        if self.download.is_some() {
+            return Err("download_busy".into());
+        }
+        let info = self.manifest.get(id).ok_or("unknown model")?;
+        let dir = self.models_dir();
+        let files: Vec<RemoteFile> = [&self.manifest.vad, &info.file]
+            .into_iter()
+            .filter(|f| !models::is_installed(&dir, f))
+            .cloned()
+            .collect();
+        let total = files.iter().map(|f| f.size).sum();
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.download = Some(ActiveDownload {
+            model_id: id.to_string(),
+            downloaded: 0,
+            total,
+            cancel: cancel.clone(),
+        });
+        let tx = self.tx.clone();
+        tokio::spawn(async move {
+            let result = fetch_all(&files, &dir, &cancel, &tx).await;
+            let _ = tx.send(Msg::DownloadFinished(result));
+        });
+        self.shell.changed(Changed::Models);
+        Ok(())
+    }
+
+    async fn on_download_finished(&mut self, result: Result<(), DownloadError>) {
+        let Some(d) = self.download.take() else {
+            return;
+        };
+        let error = match &result {
+            Ok(()) => None,
+            Err(e) => {
+                tracing::warn!(model = %d.model_id, "download failed: {e}");
+                Some(e.code())
+            }
+        };
+        self.shell.download(&DownloadEvent {
+            model_id: d.model_id.clone(),
+            downloaded: d.downloaded,
+            total: d.total,
+            done: true,
+            error,
+        });
+        self.shell.changed(Changed::Models);
+        self.refresh_shell();
+        if result.is_ok() && self.model.is_none() {
+            self.settings.active_model = Some(d.model_id);
+            self.save_settings();
+            self.shell.changed(Changed::Settings);
+            self.reload_pending = true;
+            self.reload_if_pending().await;
+        }
+    }
+
     async fn delete_model(&mut self, id: &str) -> Result<(), String> {
         let info = self.manifest.get(id).ok_or("unknown model")?;
+        if self.download.as_ref().is_some_and(|d| d.model_id == id) {
+            return Err("busy".into());
+        }
         let in_use = self.model.as_ref().is_some_and(|m| m.id == id);
         if in_use
             && matches!(
@@ -739,6 +859,11 @@ impl<S: Shell> Actor<S> {
                 info: m.clone(),
                 installed: vad && models::is_installed(&dir, &m.file),
                 active: self.model.as_ref().is_some_and(|a| a.id == m.id),
+                download: self
+                    .download
+                    .as_ref()
+                    .filter(|d| d.model_id == m.id)
+                    .map(|d| (d.downloaded, d.total)),
             })
             .collect()
     }
@@ -781,4 +906,32 @@ impl<S: Shell> Actor<S> {
     fn now_ms(&self) -> u64 {
         self.epoch.elapsed().as_millis() as u64
     }
+}
+
+/// How often the download reports progress to the UI.
+const PROGRESS_EVERY: Duration = Duration::from_millis(250);
+
+/// Downloads `files` in order, reporting the bytes done over all of them.
+async fn fetch_all(
+    files: &[RemoteFile],
+    dir: &std::path::Path,
+    cancel: &AtomicBool,
+    tx: &ActorTx,
+) -> Result<(), DownloadError> {
+    let client = download::client()?;
+    let mut before = 0;
+    let mut last = Instant::now();
+    for file in files {
+        let mut report = |n: u64| {
+            if last.elapsed() >= PROGRESS_EVERY {
+                last = Instant::now();
+                let _ = tx.send(Msg::DownloadProgress {
+                    downloaded: before + n,
+                });
+            }
+        };
+        download::fetch(&client, file, dir, cancel, &mut report).await?;
+        before += file.size;
+    }
+    Ok(())
 }

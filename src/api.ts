@@ -79,6 +79,17 @@ export type ModelEntry = {
   recommended_for: ("gpu" | "cpu_strong" | "cpu_weak")[];
   installed: boolean;
   active: boolean;
+  /** [bytes so far, total] while downloading. */
+  download: [number, number] | null;
+};
+
+/** `download` event: progress, then once `done` (with an error code on failure). */
+export type DownloadEvent = {
+  model_id: string;
+  downloaded: number;
+  total: number;
+  done: boolean;
+  error: string | null;
 };
 
 export type BenchResult = { audio_ms: number; inference_ms: number; text: string };
@@ -105,6 +116,8 @@ export const api = {
   models: () => invoke<ModelEntry[]>("list_models"),
   selectModel: (id: string) => invoke<void>("select_model", { id }),
   deleteModel: (id: string) => invoke<void>("delete_model", { id }),
+  downloadModel: (id: string) => invoke<void>("download_model", { id }),
+  cancelDownload: () => invoke<void>("cancel_download"),
   benchmark: () => invoke<BenchResult>("benchmark"),
   microphones: () => invoke<MicInfo[]>("list_microphones"),
   history: () => invoke<HistoryEntry[]>("get_history"),
