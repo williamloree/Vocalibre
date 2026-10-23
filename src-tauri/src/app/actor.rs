@@ -445,18 +445,13 @@ impl<S: Shell> Actor<S> {
         }
         let has_text = !text.is_empty();
         if current && has_text {
-            if let Err(detail) = self.inject(text.clone()).await {
-                return self
-                    .dispatch(Input::TranscriptionFailed { job_id, detail })
-                    .await;
-            }
-            if self.last_text.replace(text.clone()).is_none() {
-                self.refresh_shell();
-            }
+            // Kept before pasting: a dictation that cannot be pasted (no
+            // Accessibility permission on macOS) stays in the history and
+            // can be pasted again.
             if self.settings.history_enabled {
                 self.history.push(history::Entry {
                     id: 0,
-                    text,
+                    text: text.clone(),
                     at: chrono::Local::now().to_rfc3339(),
                     duration_ms: audio_ms,
                     model_id: self
@@ -466,6 +461,14 @@ impl<S: Shell> Actor<S> {
                         .unwrap_or_default(),
                 });
                 self.save_history();
+            }
+            if self.last_text.replace(text.clone()).is_none() {
+                self.refresh_shell();
+            }
+            if let Err(detail) = self.inject(text).await {
+                return self
+                    .dispatch(Input::TranscriptionFailed { job_id, detail })
+                    .await;
             }
         }
         self.dispatch(Input::TranscriptionFinished { job_id, has_text })
