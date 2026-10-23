@@ -283,6 +283,16 @@ fn open(
     ))
 }
 
+/// Whether a stream error means the stream stopped delivering audio.
+/// Glitches (xruns), automatic reroutes and a refused real-time priority
+/// leave the stream running, so the recording goes on.
+fn is_fatal(kind: cpal::ErrorKind) -> bool {
+    !matches!(
+        kind,
+        cpal::ErrorKind::Xrun | cpal::ErrorKind::DeviceChanged | cpal::ErrorKind::RealtimeDenied
+    )
+}
+
 fn build<T>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
@@ -309,9 +319,26 @@ where
             },
             move |e| {
                 tracing::warn!("audio stream error: {e}");
-                lost.store(true, Ordering::Relaxed);
+                if is_fatal(e.kind()) {
+                    lost.store(true, Ordering::Relaxed);
+                }
             },
             Some(Duration::from_secs(3)),
         )
         .map_err(|e| AudioError::Open(e.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn glitches_do_not_end_the_recording() {
+        assert!(!is_fatal(cpal::ErrorKind::Xrun));
+        assert!(!is_fatal(cpal::ErrorKind::DeviceChanged));
+        assert!(!is_fatal(cpal::ErrorKind::RealtimeDenied));
+        assert!(is_fatal(cpal::ErrorKind::DeviceNotAvailable));
+        assert!(is_fatal(cpal::ErrorKind::StreamInvalidated));
+        assert!(is_fatal(cpal::ErrorKind::BackendError));
+    }
 }
