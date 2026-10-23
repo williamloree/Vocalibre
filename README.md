@@ -61,8 +61,8 @@ Téléchargez l'installeur de votre système dans les [Releases](https://github.
 | Système | Fichier | Remarques |
 |---|---|---|
 | **Windows 10/11** | `Vocalibre_x.y.z_x64-setup.exe` | Sans droits administrateur. Si SmartScreen s'affiche : *Informations complémentaires* › *Exécuter quand même*. |
-| **macOS** Apple Silicon | `Vocalibre_x.y.z_aarch64.dmg` | Application non notarisée : clic droit › *Ouvrir* la première fois. Autoriser le *Micro* et l'*Accessibilité* (pour coller le texte). |
-| **macOS** Intel | `Vocalibre_x.y.z_x64.dmg` | Idem. |
+| **macOS 11+** Apple Silicon | `Vocalibre_x.y.z_aarch64.dmg` | Application non notarisée : clic droit › *Ouvrir* la première fois. Autoriser le *Micro* et l'*Accessibilité* (pour coller le texte). |
+| **macOS 11+** Intel | `Vocalibre_x.y.z_x64.dmg` | Idem. |
 | **Linux** | `.AppImage`, `.deb`, `.rpm` | Raccourci global et collage sous X11. Mises à jour automatiques avec l'AppImage. |
 
 > [!IMPORTANT]
