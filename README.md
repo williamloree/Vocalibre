@@ -10,6 +10,7 @@
 Dans n'importe quelle application, 100 % en local, accéléré par votre carte graphique.
 
 [![Release](https://img.shields.io/github/v/release/williamloree/Vocalibre?style=flat-square&color=2156d9)](https://github.com/williamloree/Vocalibre/releases/latest)
+[![CI](https://img.shields.io/github/actions/workflow/status/williamloree/Vocalibre/ci.yml?branch=develop&style=flat-square&label=CI)](https://github.com/williamloree/Vocalibre/actions/workflows/ci.yml)
 [![Licence MIT](https://img.shields.io/badge/licence-MIT-4f8cff?style=flat-square)](LICENSE)
 <br>
 [![Windows](https://img.shields.io/badge/Windows-0078D4?style=flat-square&logo=windows&logoColor=white)](#installation)
@@ -55,15 +56,23 @@ arrive dans l'application que vous utilisiez déjà (éditeur, navigateur, messa
 
 ## Installation
 
-> [!NOTE]
-> Pas encore de version publiée : Vocalibre est en cours de développement. En attendant, il se lance
-> depuis les sources ([voir plus bas](#développement)).
+Téléchargez l'installeur de votre système dans les [Releases](https://github.com/williamloree/Vocalibre/releases/latest).
 
 | Système | Fichier | Remarques |
 |---|---|---|
-| **Windows 10/11** | `Vocalibre_x.y.z_x64-setup.exe` | Si SmartScreen s'affiche : *Informations complémentaires* › *Exécuter quand même*. |
-| **macOS** (Apple Silicon) | `Vocalibre_x.y.z_aarch64.dmg` | Autoriser le *Micro* et l'*Accessibilité* (pour coller le texte) au premier lancement. |
-| **Linux** | `.AppImage`, `.deb`, `.rpm` | Raccourci global et collage sous X11. |
+| **Windows 10/11** | `Vocalibre_x.y.z_x64-setup.exe` | Sans droits administrateur. Si SmartScreen s'affiche : *Informations complémentaires* › *Exécuter quand même*. |
+| **macOS** Apple Silicon | `Vocalibre_x.y.z_aarch64.dmg` | Application non notarisée : clic droit › *Ouvrir* la première fois. Autoriser le *Micro* et l'*Accessibilité* (pour coller le texte). |
+| **macOS** Intel | `Vocalibre_x.y.z_x64.dmg` | Idem. |
+| **Linux** | `.AppImage`, `.deb`, `.rpm` | Raccourci global et collage sous X11. Mises à jour automatiques avec l'AppImage. |
+
+> [!IMPORTANT]
+> Le téléchargement des modèles depuis l'application arrive avec l'assistant de premier lancement. En
+> attendant, placez les fichiers vous-même comme expliqué dans [Modèles](#modèles).
+
+**Mises à jour.** Au démarrage puis une fois par jour, Vocalibre regarde si une nouvelle version est publiée ici
+et propose de l'installer ; elle redémarre ensuite toute seule. Les paquets sont signés et vérifiés avant
+installation. À la demande : menu de l'icône › *Rechercher des mises à jour*. Désactivable dans
+*Paramètres* › *Général*.
 
 ## Utilisation
 
@@ -158,6 +167,14 @@ s'exécute quand `VOCALIBRE_TEST_MODELS` pointe vers un dossier contenant `ggml-
 **Qualité** : `cargo fmt --all --check` et `cargo clippy --workspace --all-targets -- -D warnings` doivent
 passer sans avertissement.
 
+**Publier une version** : mettre le même numéro dans `Cargo.toml` (`[workspace.package]`),
+`src-tauri/tauri.conf.json` et `package.json`, committer, puis pousser le tag `vX.Y.Z`. Le workflow
+[`release.yml`](.github/workflows/release.yml) refuse un tag qui ne correspond pas, construit et signe les
+installeurs des trois systèmes, et publie la release avec le `latest.json` lu par les applications installées.
+Il a besoin des secrets `TAURI_SIGNING_PRIVATE_KEY` et `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Chaque push sur
+`develop` passe par [`ci.yml`](.github/workflows/ci.yml) : lint, tests et installeurs de test téléchargeables
+depuis la page du run.
+
 **Journaux** : un fichier par jour, gardé 7 jours (*Paramètres* › *Avancé*). Le
 texte dicté n'y figure jamais, sauf si `debug_log_text` est activé. Niveau réglable avec `VOCALIBRE_LOG=debug`.
 
@@ -168,7 +185,8 @@ texte dicté n'y figure jamais, sauf si `debug_log_text` est activé. Niveau ré
 - [x] Fenêtre de paramètres (tous les réglages appliqués à chaud) et historique des dictées
 - [x] Interface en français et en anglais, mode « maintenir pour parler »
 - [ ] Assistant de premier lancement : détection du matériel et téléchargement des modèles
-- [ ] Installateurs Windows, macOS, Linux, lancement au démarrage et mises à jour signées
+- [x] Installateurs Windows, macOS, Linux construits par GitHub Actions, mises à jour signées dans l'application
+- [ ] Signature des installeurs auprès de Windows et d'Apple (SmartScreen, Gatekeeper)
 
 ## Limites connues
 
@@ -180,6 +198,8 @@ texte dicté n'y figure jamais, sauf si `debug_log_text` est activé. Niveau ré
   *Paramètres* › *Raccourcis* si besoin.
 - Sur carte graphique, la toute première dictée après une installation ou une mise à jour attend que le pilote
   compile ses shaders (jusqu'à 30 s, pendant « Chargement du modèle… ») ; c'est ensuite mis en cache.
+- Les versions publiées demandent un processeur x86-64 avec AVX2 (depuis 2013 chez Intel, 2015 chez AMD) ou un
+  Mac Apple Silicon.
 - La carte graphique est partagée : un jeu ou un rendu en cours ralentit la transcription.
 
 ## Contribuer

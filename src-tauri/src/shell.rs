@@ -388,6 +388,7 @@ fn build_menu(app: &AppHandle, view: &View<'_>) -> tauri::Result<(Menu<Wry>, Tra
             &item("history", s.history)?,
             &item("settings", s.settings)?,
             &item("logs_dir", s.open_logs)?,
+            &item("check_updates", s.check_updates)?,
             &PredefinedMenuItem::separator(app)?,
             &item("quit", s.quit)?,
         ],

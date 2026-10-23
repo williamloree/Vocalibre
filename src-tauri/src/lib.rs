@@ -11,6 +11,7 @@ pub mod settings;
 pub mod shell;
 pub mod sound;
 pub mod stt;
+pub mod updater;
 
 use tauri::{AppHandle, Manager};
 use tauri_plugin_autostart::MacosLauncher;
@@ -41,6 +42,7 @@ pub fn run() {
         )
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
             None,
@@ -110,6 +112,7 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let (actor, tx) = Actor::new(settings, paths, manifest, TauriShell::new(app.clone()))?;
     app.manage(tx);
     tauri::async_runtime::spawn(actor.run());
+    updater::spawn_periodic(app.clone());
     Ok(())
 }
 
@@ -172,6 +175,7 @@ fn on_menu(app: &AppHandle, id: &str) {
                 tracing::warn!("cannot open logs: {e}");
             }
         }
+        "check_updates" => updater::check_now(app),
         "quit" => app.exit(0),
         other => {
             if let Some(model_id) = other.strip_prefix("model:") {

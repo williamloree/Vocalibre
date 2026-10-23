@@ -55,6 +55,8 @@ const fr = {
     overlay_hint: "Forme d'onde et état pendant la dictée. Déplaçable à la souris ; position mémorisée par écran.",
     history: "Garder l'historique",
     history_hint: "Les 50 dernières dictées, sur cet ordinateur uniquement. L'audio n'est jamais conservé.",
+    check_updates: "Rechercher les mises à jour",
+    check_updates_hint: "Au démarrage puis une fois par jour, auprès de GitHub. Rien n'est installé sans votre accord ; aussi disponible dans le menu de l'icône.",
   },
   models: {
     acceleration: "Exécution",

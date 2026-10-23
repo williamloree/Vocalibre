@@ -59,6 +59,12 @@ export function General() {
           checked={s.history_enabled}
           onChange={(history_enabled) => void update({ history_enabled })}
         />
+        <Toggle
+          label={t("general.check_updates")}
+          hint={t("general.check_updates_hint")}
+          checked={s.check_updates}
+          onChange={(check_updates) => void update({ check_updates })}
+        />
       </Section>
     </>
   );

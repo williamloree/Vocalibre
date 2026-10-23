@@ -57,6 +57,8 @@ const en: Messages = {
     overlay_hint: "Waveform and state while dictating. Drag it with the mouse; its position is remembered per screen.",
     history: "Keep history",
     history_hint: "The last 50 dictations, on this computer only. Audio is never kept.",
+    check_updates: "Check for updates",
+    check_updates_hint: "At startup, then once a day, from GitHub. Nothing is installed without your consent; also in the tray icon menu.",
   },
   models: {
     acceleration: "Running on",

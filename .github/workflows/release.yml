@@ -1,0 +1,93 @@
+# On a vX.Y.Z tag: checks the tag matches the app version, builds the signed
+# installers on the three systems into a draft release, then publishes it.
+# Installed apps find it through releases/latest/download/latest.json.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  GGML_NATIVE: "OFF"
+  TAG: ${{ github.ref_name }}
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  draft:
+    name: Draft release
+    runs-on: ubuntu-22.04
+    outputs:
+      release_id: ${{ steps.create.outputs.id }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Tag matches the version
+        run: node scripts/check-version.mjs "$TAG"
+      - id: create
+        name: Create the draft
+        run: |
+          # Reused when the workflow is re-run after a failure.
+          gh release view "$TAG" > /dev/null 2>&1 ||
+            gh release create "$TAG" --draft --verify-tag --generate-notes --title "Vocalibre $TAG"
+          id=$(gh api "repos/$GITHUB_REPOSITORY/releases" --jq ".[] | select(.tag_name == \"$TAG\") | .id")
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build (${{ matrix.name }})
+    needs: draft
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+            x86: true
+          - name: macOS Apple Silicon
+            os: macos-latest
+          - name: macOS Intel
+            os: macos-15-intel
+            x86: true
+          - name: Linux
+            os: ubuntu-22.04
+            x86: true
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: x86-64 baseline (AVX2)
+        if: matrix.x86
+        shell: bash
+        run: printf 'GGML_AVX=ON\nGGML_AVX2=ON\nGGML_FMA=ON\nGGML_F16C=ON\n' >> "$GITHUB_ENV"
+      - uses: ./.github/actions/setup
+      - uses: tauri-apps/tauri-action@action-v1.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Signs the update packages; the public key is in tauri.conf.json.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          releaseId: ${{ needs.draft.outputs.release_id }}
+          tauriScript: npm run tauri
+          updaterJsonPreferNsis: true
+
+  publish:
+    name: Publish
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      # Four jobs merge their entry into latest.json: make sure none was lost.
+      - name: Every platform is in latest.json
+        run: |
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern latest.json
+          for p in windows-x86_64 darwin-aarch64 darwin-x86_64 linux-x86_64; do
+            jq -e --arg p "$p" '.platforms[$p].signature | length > 0' latest.json > /dev/null \
+              || { echo "missing $p in latest.json"; exit 1; }
+          done
+      - name: Publish
+        run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest

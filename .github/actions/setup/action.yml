@@ -1,0 +1,54 @@
+# Toolchains and system libraries shared by every job that compiles the app.
+name: Setup
+description: Rust, Node, Vulkan SDK and the native build tools for whisper.cpp
+
+inputs:
+  target:
+    description: Extra Rust target (macOS cross builds)
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Linux libraries
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
+          patchelf libasound2-dev libxdo-dev libvulkan-dev ninja-build clang
+
+    # whisper.cpp hits MAX_PATH with MSBuild; LLVM (for bindgen) is preinstalled.
+    - name: Windows tools
+      if: runner.os == 'Windows'
+      shell: bash
+      run: |
+        choco install ninja -y --no-progress
+        echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> "$GITHUB_ENV"
+
+    - name: Vulkan SDK
+      if: runner.os != 'macOS'
+      uses: jakoch/install-vulkan-sdk-action@v1.7.0
+      with:
+        vulkan_version: 1.4.363.0
+        cache: true
+        stripdown: true
+
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        components: clippy, rustfmt
+        targets: ${{ inputs.target }}
+
+    - uses: Swatinem/rust-cache@v2.9.2
+      with:
+        key: ${{ inputs.target }}-${{ env.GGML_NATIVE }}
+
+    - uses: actions/setup-node@v7.1.0
+      with:
+        node-version: 22
+        cache: npm
+
+    - name: JavaScript dependencies
+      shell: bash
+      run: npm ci
