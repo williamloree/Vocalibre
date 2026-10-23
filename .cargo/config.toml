@@ -1,3 +1,11 @@
 [env]
 # MSBuild hits MAX_PATH inside whisper.cpp's nested Vulkan shader build; Ninja does not.
 CMAKE_GENERATOR = "Ninja"
+# Static C/C++ runtime in whisper.cpp too (see crt-static below); whisper-rs-sys
+# passes CMAKE_* variables to CMake. Ignored outside MSVC.
+CMAKE_POLICY_DEFAULT_CMP0091 = "NEW"
+CMAKE_MSVC_RUNTIME_LIBRARY = "MultiThreaded"
+
+# Links the C/C++ runtime into the exe: no Visual C++ Redistributable to install.
+[target.'cfg(all(target_os = "windows", target_env = "msvc"))']
+rustflags = ["-C", "target-feature=+crt-static"]
