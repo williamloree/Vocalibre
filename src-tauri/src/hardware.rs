@@ -82,6 +82,11 @@ fn gpus() -> Vec<Gpu> {
         ggml_backend_dev_type_GGML_BACKEND_DEVICE_TYPE_IGPU as IGPU,
     };
 
+    // Metal on Intel Macs is many times slower than their CPU (20-40 s for
+    // a few seconds of audio on an Iris Plus): never offer it.
+    if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
+        return Vec::new();
+    }
     let mut out = Vec::new();
     // SAFETY: ggml owns the device registry for the whole process; devices
     // are never freed. `props` is plain data filled in by ggml, and its
