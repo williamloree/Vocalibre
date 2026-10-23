@@ -1,5 +1,9 @@
 pub mod app;
 pub mod audio;
+pub mod commands;
+pub mod fsutil;
+pub mod history;
+pub mod i18n;
 pub mod injection;
 pub mod logging;
 pub mod models;
@@ -8,23 +12,15 @@ pub mod shell;
 pub mod sound;
 pub mod stt;
 
-use std::path::PathBuf;
-
 use tauri::{AppHandle, Manager};
-use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutEvent, ShortcutState};
-use tauri_plugin_opener::OpenerExt;
+use tauri_plugin_autostart::MacosLauncher;
+use tauri_plugin_global_shortcut::{Shortcut, ShortcutEvent, ShortcutState};
 
 use app::actor::{Actor, ActorTx, Msg, Paths};
 use app::state::Input;
 use models::manifest::Manifest;
 use settings::{LoadOutcome, Settings};
 use shell::{Hotkeys, TauriShell};
-
-/// Folders the tray can open.
-struct Dirs {
-    models: PathBuf,
-    logs: PathBuf,
-}
 
 /// Keeps the log file writer alive until exit.
 struct LogGuard {
@@ -33,9 +29,10 @@ struct LogGuard {
 
 pub fn run() {
     let app = tauri::Builder::default()
-        // Must be first: a second launch exits before touching anything.
-        .plugin(tauri_plugin_single_instance::init(|_, _, _| {
-            tracing::info!("already running");
+        // Must be first: a second launch exits before touching anything,
+        // and opens the settings of the running instance instead.
+        .plugin(tauri_plugin_single_instance::init(|app, _, _| {
+            shell::open_main(app, "general");
         }))
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
@@ -43,6 +40,32 @@ pub fn run() {
                 .build(),
         )
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_autostart::init(
+            MacosLauncher::LaunchAgent,
+            None,
+        ))
+        .manage(Hotkeys::default())
+        .invoke_handler(tauri::generate_handler![
+            commands::get_status,
+            commands::get_lang,
+            commands::get_settings,
+            commands::update_settings,
+            commands::reset_settings,
+            commands::suspend_hotkey,
+            commands::list_models,
+            commands::select_model,
+            commands::delete_model,
+            commands::benchmark,
+            commands::list_microphones,
+            commands::get_history,
+            commands::clear_history,
+            commands::copy_text,
+            commands::open_logs_dir,
+            commands::open_models_dir,
+            commands::overlay_moved,
+            commands::app_info,
+        ])
         .setup(|app| setup(app.handle()))
         .build(tauri::generate_context!());
     match app {
@@ -65,9 +88,11 @@ pub fn run() {
 fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let path = app.path();
     let config_dir = path.app_config_dir()?;
+    let data_dir = path.app_data_dir()?;
     let logs = path.app_log_dir()?;
-    std::fs::create_dir_all(&config_dir)?;
-    std::fs::create_dir_all(&logs)?;
+    for dir in [&config_dir, &data_dir, &logs] {
+        std::fs::create_dir_all(dir)?;
+    }
     app.manage(LogGuard {
         _guard: logging::init(&logs),
     });
@@ -75,45 +100,14 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
 
     let settings = load_settings(&config_dir);
     let manifest = Manifest::embedded()?;
-    let models_dir = match &settings.models_dir {
-        Some(d) => d.clone(),
-        None => path.app_data_dir()?.join("models"),
-    };
-    std::fs::create_dir_all(&models_dir)?;
-    tracing::info!(dir = %models_dir.display(), "models directory");
-
-    let hotkeys = Hotkeys {
-        main: parse_shortcut(&settings.hotkey, &Settings::default().hotkey)?,
-        cancel: parse_shortcut(&settings.cancel_key, &Settings::default().cancel_key)?,
-    };
-    let hotkey_error = app
-        .global_shortcut()
-        .register(hotkeys.main)
-        .err()
-        .map(|e| e.to_string());
-    if let Some(e) = &hotkey_error {
-        tracing::error!(hotkey = %settings.hotkey, "cannot register hotkey: {e}");
-    }
-    app.manage(hotkeys);
-
-    let installed = models::installed(&manifest, &models_dir);
-    let tray = shell::build_tray(app, &installed, on_menu)?;
+    shell::build_tray(app, on_menu)?;
     shell::build_overlay(app)?;
-    let hotkey_label = match hotkey_error {
-        None => settings.hotkey.clone(),
-        Some(_) => format!("raccourci {} indisponible", settings.hotkey),
-    };
-    let shell = TauriShell::new(app.clone(), tray, hotkey_label, settings.overlay_enabled);
 
-    app.manage(Dirs {
-        models: models_dir.clone(),
-        logs,
-    });
     let paths = Paths {
         config_dir,
-        models_dir,
+        data_dir,
     };
-    let (actor, tx) = Actor::new(settings, paths, manifest, shell)?;
+    let (actor, tx) = Actor::new(settings, paths, manifest, TauriShell::new(app.clone()))?;
     app.manage(tx);
     tauri::async_runtime::spawn(actor.run());
     Ok(())
@@ -141,17 +135,6 @@ fn load_settings(dir: &std::path::Path) -> Settings {
     s
 }
 
-/// Falls back to the default when the configured shortcut does not parse.
-fn parse_shortcut(value: &str, default: &str) -> Result<Shortcut, Box<dyn std::error::Error>> {
-    match value.parse() {
-        Ok(s) => Ok(s),
-        Err(e) => {
-            tracing::warn!("invalid shortcut {value:?} ({e}), using {default}");
-            Ok(default.parse()?)
-        }
-    }
-}
-
 fn send(app: &AppHandle, msg: Msg) {
     if let Some(tx) = app.try_state::<ActorTx>() {
         let _ = tx.send(msg);
@@ -159,7 +142,8 @@ fn send(app: &AppHandle, msg: Msg) {
 }
 
 fn on_shortcut(app: &AppHandle, shortcut: &Shortcut, event: ShortcutEvent) {
-    let Some(keys) = app.try_state::<Hotkeys>() else {
+    let state = app.state::<Hotkeys>();
+    let Some(keys) = state.0.lock().ok().and_then(|g| *g) else {
         return;
     };
     let pressed = event.state == ShortcutState::Pressed;
@@ -181,17 +165,11 @@ fn on_menu(app: &AppHandle, id: &str) {
     match id {
         "toggle" => send(app, Msg::Input(Input::ToggleRequested)),
         "retry" => send(app, Msg::Input(Input::Retry)),
-        "models_dir" | "logs_dir" => {
-            let Some(dirs) = app.try_state::<Dirs>() else {
-                return;
-            };
-            let dir = if id == "models_dir" {
-                &dirs.models
-            } else {
-                &dirs.logs
-            };
-            if let Err(e) = app.opener().open_path(dir.to_string_lossy(), None::<&str>) {
-                tracing::warn!("cannot open {}: {e}", dir.display());
+        "history" => shell::open_main(app, "history"),
+        "settings" => shell::open_main(app, "general"),
+        "logs_dir" => {
+            if let Err(e) = commands::open_logs_dir(app.clone()) {
+                tracing::warn!("cannot open logs: {e}");
             }
         }
         "quit" => app.exit(0),

@@ -44,7 +44,12 @@ arrive dans l'application que vous utilisiez déjà (éditeur, navigateur, messa
   et les phrases parasites connues (« Sous-titres réalisés par… ») sont retirées.
 - 📋 **Presse-papiers préservé** : son contenu (texte ou image) est restauré après le collage.
 - 🔔 **Retours sonores et pilule flottante** : début, fin, transcription terminée ; forme d'onde en direct.
-- 🌍 **Multilingue** : détection automatique de la langue, ou langue forcée.
+- 🌍 **Multilingue** : détection automatique de la langue, ou langue forcée. Interface en français et en anglais.
+- 📝 **Vocabulaire et remplacements** : noms propres et jargon mieux reconnus ; « virgule » → `,`, « point à la
+  ligne » → retour à la ligne.
+- 🕘 **Historique** des 50 dernières dictées, copie en un clic, jamais envoyé nulle part (désactivable).
+- ⚙️ **Paramètres appliqués immédiatement** : raccourci (appuyer ou maintenir pour parler), micro, modèle,
+  accélération, mode de collage… sans redémarrer.
 - ⏹️ `Échap` annule une dictée en cours.
 
 ## Installation
@@ -66,18 +71,15 @@ arrive dans l'application que vous utilisiez déjà (éditeur, navigateur, messa
 | Démarrer / arrêter la dictée | `Ctrl+Espace` (ou *Démarrer la dictée* dans le menu de l'icône) |
 | Annuler la dictée en cours | `Échap` |
 | Changer de modèle | Clic sur l'icône › *Modèle* |
-| Ouvrir le dossier des modèles ou des journaux | Clic sur l'icône |
+| Paramètres, historique | Clic sur l'icône › *Paramètres* ou *Historique* |
+| Déplacer la pilule | Glisser-déposer pendant une dictée (position mémorisée par écran) |
 
-Un enregistrement de moins de 0,3 s est ignoré (appui accidentel). Une dictée est limitée à 5 minutes.
-Si une dictée suit la précédente de moins d'une minute, une espace est ajoutée devant.
-
-Les paramètres sont dans `settings.json` (dossier de configuration de l'application ; sous Windows
-`%APPDATA%\io.github.williamloree.vocalibre`) : langue, vocabulaire personnalisé, remplacements
-(« virgule » → `,`), mode coller ou frappe, sons, micro, etc.
+Un enregistrement de moins de 0,3 s est ignoré (appui accidentel). Une dictée est limitée à 5 minutes
+(réglable). Si une dictée suit la précédente de moins d'une minute, une espace est ajoutée devant.
 
 ## Modèles
 
-Les modèles se placent dans le dossier des modèles (clic sur l'icône › *Ouvrir le dossier des modèles*).
+Les modèles se placent dans le dossier des modèles (*Paramètres* › *Modèles* › *Ouvrir le dossier*).
 Il faut toujours le modèle de détection de voix
 [`ggml-silero-v6.2.0.bin`](https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v6.2.0.bin),
 plus au moins un modèle Whisper :
@@ -137,7 +139,9 @@ Le premier build compile whisper.cpp et ses shaders Vulkan : comptez quelques mi
 | [`src-tauri/src/injection`](src-tauri/src/injection) | Collage via le presse-papiers ou frappe |
 | [`src-tauri/src/settings`](src-tauri/src/settings) | Paramètres : validation, migrations, écriture atomique |
 | [`src-tauri/src/models`](src-tauri/src/models) | Catalogue des modèles |
-| [`src`](src) | Interface (React, TypeScript, Vite) |
+| [`src-tauri/src/shell.rs`](src-tauri/src/shell.rs) | Icône, pilule, fenêtre, raccourcis globaux |
+| [`src-tauri/src/commands.rs`](src-tauri/src/commands.rs) | Commandes appelées par l'interface (autorisées fenêtre par fenêtre) |
+| [`src`](src) | Interface : pilule et paramètres (React, TypeScript, Vite, i18next) |
 | [`tools/bench`](tools/bench) | Banc d'essai des modèles |
 
 **Tests** : `cargo test --workspace`. Le test d'intégration
@@ -148,18 +152,17 @@ s'exécute quand `VOCALIBRE_TEST_MODELS` pointe vers un dossier contenant `ggml-
 **Qualité** : `cargo fmt --all --check` et `cargo clippy --workspace --all-targets -- -D warnings` doivent
 passer sans avertissement.
 
-**Journaux** : un fichier par jour, gardé 7 jours (clic sur l'icône › *Ouvrir le dossier des journaux*). Le
+**Journaux** : un fichier par jour, gardé 7 jours (*Paramètres* › *Avancé*). Le
 texte dicté n'y figure jamais, sauf si `debug_log_text` est activé. Niveau réglable avec `VOCALIBRE_LOG=debug`.
 
 ## Feuille de route
 
 - [x] Banc d'essai des modèles et choix des modèles par défaut
 - [x] Dictée de bout en bout : raccourci, micro, VAD, Whisper GPU, collage, sons, pilule flottante
-- [ ] Fenêtre de paramètres (tous les réglages appliqués à chaud) et historique des dictées
-- [ ] Interface en français et en anglais
+- [x] Fenêtre de paramètres (tous les réglages appliqués à chaud) et historique des dictées
+- [x] Interface en français et en anglais, mode « maintenir pour parler »
 - [ ] Assistant de premier lancement : détection du matériel et téléchargement des modèles
 - [ ] Installateurs Windows, macOS, Linux, lancement au démarrage et mises à jour signées
-- [ ] Mode « maintenir pour parler » réglable depuis l'interface
 
 ## Limites connues
 
@@ -167,8 +170,11 @@ texte dicté n'y figure jamais, sauf si `debug_log_text` est activé. Niveau ré
 - Le collage est refusé par les applications lancées en administrateur (protection de Windows). Ne lancez pas
   Vocalibre en administrateur pour contourner : utilisez l'application cible en mode normal.
 - Sous Linux, le raccourci global et le collage demandent X11 (Wayland ne les autorise pas).
-- `Ctrl+Espace` est aussi l'autocomplétion de plusieurs éditeurs de code : changez `hotkey` dans les
-  paramètres si besoin.
+- `Ctrl+Espace` est aussi l'autocomplétion de plusieurs éditeurs de code : changez-le dans
+  *Paramètres* › *Raccourcis* si besoin.
+- Sur carte graphique, la toute première dictée après une installation ou une mise à jour attend que le pilote
+  compile ses shaders (jusqu'à 30 s, pendant « Chargement du modèle… ») ; c'est ensuite mis en cache.
+- La carte graphique est partagée : un jeu ou un rendu en cours ralentit la transcription.
 
 ## Contribuer
 

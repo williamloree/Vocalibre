@@ -1,33 +1,95 @@
-//! The only owner of application state. Hotkey, tray, audio and STT all talk
-//! to it through one channel; it feeds the [`Machine`] and runs the effects.
+//! The only owner of application state. Hotkey, tray, windows, audio and STT
+//! all talk to it through one channel; it feeds the [`Machine`], runs the
+//! effects and applies settings changes immediately.
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use tokio::sync::mpsc;
+use serde::Serialize;
+use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
 use super::state::{AppState, Effect, Input, Machine, Notice};
 use crate::audio::{Audio, AudioEvent};
+use crate::history::{self, History};
+use crate::i18n::{self, Lang};
 use crate::injection::{self, Injector, LastInjection};
-use crate::models::{self, manifest::Manifest};
-use crate::settings::{self, Acceleration, Settings};
+use crate::models::manifest::{Manifest, ModelInfo};
+use crate::models::{self};
+use crate::settings::{self, Acceleration, OverlayPosition, Settings};
 use crate::sound::Player;
 use crate::stt::postprocess;
 use crate::stt::whisper::{
-    LoadRequest, Loaded, SttError, SttWorker, TranscribeOptions, Transcript,
+    self, LoadRequest, Loaded, SttError, SttWorker, TranscribeOptions, Transcript,
 };
 
-/// What the actor needs from the desktop shell (tray, overlay, hotkeys).
+/// What the shell shows outside the state itself.
+pub struct View<'a> {
+    pub settings: &'a Settings,
+    pub lang: Lang,
+    pub installed: Vec<&'a ModelInfo>,
+    pub active_model: Option<&'a str>,
+}
+
+/// Window events telling the UI to refetch.
+#[derive(Debug, Clone, Copy)]
+pub enum Changed {
+    Settings,
+    Models,
+    History,
+}
+
+/// What the actor needs from the desktop shell (tray, windows, hotkeys).
 pub trait Shell: Send + 'static {
     fn state_changed(&self, state: &AppState);
     fn level(&self, level: f32);
     fn notice(&self, notice: &Notice);
-    fn model_changed(&self, model_id: &str);
     fn set_cancel_key(&self, enabled: bool);
+    /// Registers `main` as the dictation shortcut and remembers `cancel`.
+    /// On failure the previous shortcuts stay active.
+    fn set_hotkeys(&self, main: &str, cancel: &str) -> Result<(), String>;
+    /// Releases the dictation shortcut while the UI captures a new one.
+    fn suspend_hotkey(&self, suspended: bool);
+    /// Settings, installed models or the active model changed.
+    fn refresh(&self, view: &View<'_>);
+    fn changed(&self, what: Changed);
 }
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ModelStatus {
+    pub id: String,
+    pub on_gpu: bool,
+    pub fell_back_to_cpu: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Status {
+    pub state: AppState,
+    pub lang: Lang,
+    pub model: Option<ModelStatus>,
+    pub hotkey_error: Option<String>,
+    pub models_dir: PathBuf,
+    pub vad_file: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ModelEntry {
+    #[serde(flatten)]
+    pub info: ModelInfo,
+    pub installed: bool,
+    pub active: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BenchResult {
+    pub audio_ms: u64,
+    pub inference_ms: u64,
+    pub text: String,
+}
+
+type Reply<T> = oneshot::Sender<T>;
 
 #[derive(Debug)]
 pub enum Msg {
@@ -39,7 +101,24 @@ pub enum Msg {
     },
     Transcribed {
         job_id: u64,
+        audio_ms: u64,
         result: Result<Transcript, SttError>,
+    },
+    GetStatus(Reply<Status>),
+    GetSettings(Reply<Settings>),
+    /// Errors are codes the UI translates: `invalid:<fields>`, `hotkey:<detail>`.
+    UpdateSettings(Box<Settings>, Reply<Result<Settings, String>>),
+    ResetSettings(Reply<Result<Settings, String>>),
+    SuspendHotkey(bool),
+    GetModels(Reply<Vec<ModelEntry>>),
+    DeleteModel(String, Reply<Result<(), String>>),
+    Benchmark(Reply<Result<BenchResult, String>>),
+    GetHistory(Reply<Vec<history::Entry>>),
+    ClearHistory,
+    CopyText(String, Reply<Result<(), String>>),
+    OverlayMoved {
+        monitor: String,
+        position: OverlayPosition,
     },
 }
 
@@ -47,7 +126,16 @@ pub type ActorTx = mpsc::UnboundedSender<Msg>;
 
 pub struct Paths {
     pub config_dir: PathBuf,
-    pub models_dir: PathBuf,
+    pub data_dir: PathBuf,
+}
+
+impl Paths {
+    fn models_dir(&self, settings: &Settings) -> PathBuf {
+        settings
+            .models_dir
+            .clone()
+            .unwrap_or_else(|| self.data_dir.join("models"))
+    }
 }
 
 pub struct Actor<S: Shell> {
@@ -58,11 +146,15 @@ pub struct Actor<S: Shell> {
     settings: Settings,
     paths: Paths,
     manifest: Manifest,
+    history: History,
     audio: Audio,
     stt: SttWorker,
     sounds: Player,
     injector: Arc<Mutex<Injector>>,
-    loaded_model: Option<String>,
+    model: Option<ModelStatus>,
+    /// The model to load as soon as no audio is in flight.
+    reload_pending: bool,
+    hotkey_error: Option<String>,
     last_injection: Option<LastInjection>,
     auto_stop: Option<JoinHandle<()>>,
     epoch: Instant,
@@ -83,6 +175,7 @@ impl<S: Shell> Actor<S> {
             rx,
             audio_rx,
             machine: Machine::new(AppState::Onboarding),
+            history: History::load(&paths.data_dir),
             settings,
             paths,
             manifest,
@@ -90,7 +183,9 @@ impl<S: Shell> Actor<S> {
             stt: SttWorker::spawn()?,
             sounds: Player::spawn()?,
             injector: Arc::default(),
-            loaded_model: None,
+            model: None,
+            reload_pending: true,
+            hotkey_error: None,
             last_injection: None,
             auto_stop: None,
             epoch: Instant::now(),
@@ -100,14 +195,20 @@ impl<S: Shell> Actor<S> {
     }
 
     pub async fn run(mut self) {
-        let preferred = self.settings.active_model.clone();
-        match models::pick(&self.manifest, &self.paths.models_dir, preferred.as_deref()) {
-            Some(model_id) => self.dispatch(Input::LoadModel { model_id }).await,
-            None => {
-                tracing::warn!(dir = %self.paths.models_dir.display(), "no model installed");
-                self.shell.state_changed(self.machine.state());
-            }
+        let models_dir = self.models_dir();
+        if let Err(e) = std::fs::create_dir_all(&models_dir) {
+            tracing::error!(dir = %models_dir.display(), "cannot create models directory: {e}");
         }
+        self.hotkey_error = self
+            .shell
+            .set_hotkeys(&self.settings.hotkey, &self.settings.cancel_key)
+            .err();
+        if let Some(e) = &self.hotkey_error {
+            tracing::error!(hotkey = %self.settings.hotkey, "cannot register hotkey: {e}");
+        }
+        self.refresh_shell();
+        self.shell.state_changed(self.machine.state());
+        self.reload_if_pending().await;
         loop {
             tokio::select! {
                 Some(msg) = self.rx.recv() => self.on_msg(msg).await,
@@ -121,26 +222,63 @@ impl<S: Shell> Actor<S> {
         match msg {
             Msg::Input(input) => self.dispatch(input).await,
             Msg::SelectModel(model_id) => self.dispatch(Input::LoadModel { model_id }).await,
-            Msg::Loaded { model_id, result } => match result {
-                Ok(info) => {
-                    if info.fell_back_to_cpu {
-                        tracing::warn!("GPU unavailable, model runs on CPU");
-                    }
-                    self.loaded_model = Some(model_id.clone());
-                    self.shell.model_changed(&model_id);
-                    if self.settings.active_model.as_deref() != Some(model_id.as_str()) {
-                        self.settings.active_model = Some(model_id.clone());
-                        self.save_settings();
-                    }
-                    self.dispatch(Input::ModelLoaded { model_id }).await;
-                }
-                Err(e) => {
-                    let detail = e.to_string();
-                    self.dispatch(Input::ModelLoadFailed { model_id, detail })
-                        .await;
-                }
-            },
-            Msg::Transcribed { job_id, result } => self.on_transcribed(job_id, result).await,
+            Msg::Loaded { model_id, result } => self.on_loaded(model_id, result).await,
+            Msg::Transcribed {
+                job_id,
+                audio_ms,
+                result,
+            } => self.on_transcribed(job_id, audio_ms, result).await,
+            Msg::GetStatus(reply) => {
+                let _ = reply.send(self.status());
+            }
+            Msg::GetSettings(reply) => {
+                let _ = reply.send(self.settings.clone());
+            }
+            Msg::UpdateSettings(new, reply) => {
+                let result = self.update_settings(*new).await;
+                let _ = reply.send(result);
+            }
+            Msg::ResetSettings(reply) => {
+                // The models stay where they are; the active model and
+                // other internal fields are kept by `update_settings`.
+                let fresh = Settings {
+                    models_dir: self.settings.models_dir.clone(),
+                    ..Settings::default()
+                };
+                let result = self.update_settings(fresh).await;
+                let _ = reply.send(result);
+            }
+            Msg::SuspendHotkey(suspended) => self.shell.suspend_hotkey(suspended),
+            Msg::GetModels(reply) => {
+                let _ = reply.send(self.model_entries());
+            }
+            Msg::DeleteModel(id, reply) => {
+                let result = self.delete_model(&id).await;
+                let _ = reply.send(result);
+            }
+            Msg::Benchmark(reply) => self.benchmark(reply),
+            Msg::GetHistory(reply) => {
+                let _ = reply.send(self.history.entries().iter().cloned().collect());
+            }
+            Msg::ClearHistory => {
+                self.history.clear();
+                self.save_history();
+            }
+            Msg::CopyText(text, reply) => {
+                let injector = self.injector.clone();
+                tokio::task::spawn_blocking(move || {
+                    let result = injector
+                        .lock()
+                        .map_err(|_| "injector poisoned".to_string())
+                        .and_then(|mut i| i.copy(&text).map_err(|e| e.to_string()));
+                    let _ = reply.send(result);
+                });
+            }
+            Msg::OverlayMoved { monitor, position } => {
+                self.settings.overlay_positions.insert(monitor, position);
+                self.save_settings();
+                self.refresh_shell();
+            }
         }
     }
 
@@ -160,7 +298,40 @@ impl<S: Shell> Actor<S> {
         }
     }
 
-    async fn on_transcribed(&mut self, job_id: u64, result: Result<Transcript, SttError>) {
+    async fn on_loaded(&mut self, model_id: String, result: Result<Loaded, SttError>) {
+        match result {
+            Ok(info) => {
+                if info.fell_back_to_cpu {
+                    tracing::warn!("GPU unavailable, model runs on CPU");
+                }
+                self.model = Some(ModelStatus {
+                    id: model_id.clone(),
+                    on_gpu: info.on_gpu,
+                    fell_back_to_cpu: info.fell_back_to_cpu,
+                });
+                if self.settings.active_model.as_deref() != Some(model_id.as_str()) {
+                    self.settings.active_model = Some(model_id.clone());
+                    self.save_settings();
+                    self.shell.changed(Changed::Settings);
+                }
+                self.refresh_shell();
+                self.shell.changed(Changed::Models);
+                self.dispatch(Input::ModelLoaded { model_id }).await;
+            }
+            Err(e) => {
+                let detail = e.to_string();
+                self.dispatch(Input::ModelLoadFailed { model_id, detail })
+                    .await;
+            }
+        }
+    }
+
+    async fn on_transcribed(
+        &mut self,
+        job_id: u64,
+        audio_ms: u64,
+        result: Result<Transcript, SttError>,
+    ) {
         let current =
             matches!(self.machine.state(), AppState::Transcribing { job_id: j } if *j == job_id);
         let transcript = match result {
@@ -172,14 +343,10 @@ impl<S: Shell> Actor<S> {
                     .await;
             }
         };
-        let opts = postprocess::Options {
-            capitalize_first: self.settings.capitalize_first,
-            strip_final_period: self.settings.strip_final_period,
-            replacements: self.settings.replacements.clone(),
-        };
-        let text = postprocess::process(&transcript.text, &opts);
+        let text = postprocess::process(&transcript.text, &self.postprocess_options());
         tracing::info!(
             job_id,
+            audio_ms,
             inference_ms = transcript.inference_ms,
             chars = text.chars().count(),
             language = ?transcript.language,
@@ -190,10 +357,24 @@ impl<S: Shell> Actor<S> {
         }
         let has_text = !text.is_empty();
         if current && has_text {
-            if let Err(detail) = self.inject(text).await {
+            if let Err(detail) = self.inject(text.clone()).await {
                 return self
                     .dispatch(Input::TranscriptionFailed { job_id, detail })
                     .await;
+            }
+            if self.settings.history_enabled {
+                self.history.push(history::Entry {
+                    id: 0,
+                    text,
+                    at: chrono::Local::now().to_rfc3339(),
+                    duration_ms: audio_ms,
+                    model_id: self
+                        .model
+                        .as_ref()
+                        .map(|m| m.id.clone())
+                        .unwrap_or_default(),
+                });
+                self.save_history();
             }
         }
         self.dispatch(Input::TranscriptionFinished { job_id, has_text })
@@ -227,6 +408,97 @@ impl<S: Shell> Actor<S> {
         Ok(())
     }
 
+    /// Validates, applies and saves `new`. Fields the UI does not own are
+    /// kept from the current settings.
+    async fn update_settings(&mut self, mut new: Settings) -> Result<Settings, String> {
+        let reset = new.validate();
+        if !reset.is_empty() {
+            return Err(format!("invalid:{}", reset.join(",")));
+        }
+        let old = &self.settings;
+        new.schema_version = old.schema_version;
+        new.active_model = old.active_model.clone();
+        new.overlay_positions = old.overlay_positions.clone();
+        new.onboarding_done = old.onboarding_done;
+
+        if new.hotkey != old.hotkey || new.cancel_key != old.cancel_key {
+            self.shell
+                .set_hotkeys(&new.hotkey, &new.cancel_key)
+                .map_err(|e| format!("hotkey:{e}"))?;
+            self.hotkey_error = None;
+        }
+        let reload = new.acceleration != old.acceleration || new.models_dir != old.models_dir;
+        self.settings = new;
+        self.save_settings();
+        self.refresh_shell();
+        if reload {
+            self.reload_pending = true;
+            self.shell.changed(Changed::Models);
+            self.reload_if_pending().await;
+        }
+        Ok(self.settings.clone())
+    }
+
+    async fn delete_model(&mut self, id: &str) -> Result<(), String> {
+        let info = self.manifest.get(id).ok_or("unknown model")?;
+        let in_use = self.model.as_ref().is_some_and(|m| m.id == id);
+        if in_use
+            && matches!(
+                self.machine.state(),
+                AppState::Recording { .. } | AppState::Transcribing { .. }
+            )
+        {
+            return Err("busy".into());
+        }
+        if in_use {
+            self.stt.unload();
+            self.model = None;
+        }
+        let path = self.models_dir().join(&info.file.file_name);
+        let removed = std::fs::remove_file(&path).map_err(|e| e.to_string());
+        if in_use || self.settings.active_model.as_deref() == Some(id) {
+            self.settings.active_model = None;
+            self.save_settings();
+            self.reload_pending = true;
+        }
+        self.refresh_shell();
+        self.shell.changed(Changed::Models);
+        self.reload_if_pending().await;
+        removed
+    }
+
+    fn benchmark(&self, reply: Reply<Result<BenchResult, String>>) {
+        if self.model.is_none() || *self.machine.state() != AppState::Idle {
+            let _ = reply.send(Err("busy".into()));
+            return;
+        }
+        let samples = whisper::sample_speech();
+        let audio_ms = samples.len() as u64 / 16;
+        let (stt, opts, post) = (
+            self.stt.clone(),
+            self.transcribe_options(),
+            self.postprocess_options(),
+        );
+        tokio::spawn(async move {
+            let result = stt
+                .transcribe(
+                    samples,
+                    TranscribeOptions {
+                        language: Some("fr".into()),
+                        ..opts
+                    },
+                )
+                .await
+                .map(|t| BenchResult {
+                    audio_ms,
+                    inference_ms: t.inference_ms,
+                    text: postprocess::process(&t.text, &post),
+                })
+                .map_err(|e| e.to_string());
+            let _ = reply.send(result);
+        });
+    }
+
     /// Feeds `first` and every input produced while running its effects.
     async fn dispatch(&mut self, first: Input) {
         let mut queue = VecDeque::from([first]);
@@ -246,6 +518,31 @@ impl<S: Shell> Actor<S> {
                 Err(why) => tracing::debug!(?input, ?why, "input ignored"),
             }
         }
+        Box::pin(self.reload_if_pending()).await;
+    }
+
+    /// Loads the preferred model once no audio is in flight.
+    async fn reload_if_pending(&mut self) {
+        if !self.reload_pending
+            || matches!(
+                self.machine.state(),
+                AppState::Recording { .. } | AppState::Transcribing { .. }
+            )
+        {
+            return;
+        }
+        self.reload_pending = false;
+        let preferred = self.settings.active_model.clone();
+        let input = match models::pick(&self.manifest, &self.models_dir(), preferred.as_deref()) {
+            Some(model_id) => Input::LoadModel { model_id },
+            None => {
+                tracing::warn!(dir = %self.models_dir().display(), "no model installed");
+                self.stt.unload();
+                self.model = None;
+                Input::NoModel
+            }
+        };
+        self.dispatch(input).await;
     }
 
     async fn run_effect(&mut self, effect: Effect) -> Option<Input> {
@@ -313,13 +610,13 @@ impl<S: Shell> Actor<S> {
                 model_id,
             });
         };
-        let dir = &self.paths.models_dir;
+        let dir = self.models_dir();
         let req = LoadRequest {
             model_path: dir.join(&info.file.file_name),
             vad_path: dir.join(&self.manifest.vad.file_name),
             use_gpu: self.settings.acceleration != Acceleration::Cpu,
         };
-        self.loaded_model = None;
+        self.model = None;
         let (stt, tx) = (self.stt.clone(), self.tx.clone());
         tokio::spawn(async move {
             let result = stt.load(req).await;
@@ -328,24 +625,41 @@ impl<S: Shell> Actor<S> {
         None
     }
 
-    fn spawn_transcription(&self, job_id: u64, samples: Vec<f32>) {
+    fn transcribe_options(&self) -> TranscribeOptions {
         let s = &self.settings;
         let reduced_audio_ctx = self
-            .loaded_model
-            .as_deref()
-            .and_then(|id| self.manifest.get(id))
+            .model
+            .as_ref()
+            .and_then(|m| self.manifest.get(&m.id))
             .is_some_and(|m| m.reduced_audio_ctx);
-        let opts = TranscribeOptions {
+        TranscribeOptions {
             language: (s.language != "auto").then(|| s.language.clone()),
             prompt: s.vocabulary.clone(),
             beam_size: s.beam_size,
             threads: s.threads,
             reduced_audio_ctx,
-        };
+        }
+    }
+
+    fn postprocess_options(&self) -> postprocess::Options {
+        postprocess::Options {
+            capitalize_first: self.settings.capitalize_first,
+            strip_final_period: self.settings.strip_final_period,
+            replacements: self.settings.replacements.clone(),
+        }
+    }
+
+    fn spawn_transcription(&self, job_id: u64, samples: Vec<f32>) {
+        let audio_ms = samples.len() as u64 / 16;
+        let opts = self.transcribe_options();
         let (stt, tx) = (self.stt.clone(), self.tx.clone());
         tokio::spawn(async move {
             let result = stt.transcribe(samples, opts).await;
-            let _ = tx.send(Msg::Transcribed { job_id, result });
+            let _ = tx.send(Msg::Transcribed {
+                job_id,
+                audio_ms,
+                result,
+            });
         });
     }
 
@@ -365,10 +679,56 @@ impl<S: Shell> Actor<S> {
         }
     }
 
+    fn models_dir(&self) -> PathBuf {
+        self.paths.models_dir(&self.settings)
+    }
+
+    fn model_entries(&self) -> Vec<ModelEntry> {
+        let dir = self.models_dir();
+        let vad = models::is_installed(&dir, &self.manifest.vad);
+        self.manifest
+            .models
+            .iter()
+            .map(|m| ModelEntry {
+                info: m.clone(),
+                installed: vad && models::is_installed(&dir, &m.file),
+                active: self.model.as_ref().is_some_and(|a| a.id == m.id),
+            })
+            .collect()
+    }
+
+    fn status(&self) -> Status {
+        Status {
+            state: self.machine.state().clone(),
+            lang: i18n::resolve(self.settings.ui_language),
+            model: self.model.clone(),
+            hotkey_error: self.hotkey_error.clone(),
+            models_dir: self.models_dir(),
+            vad_file: self.manifest.vad.file_name.clone(),
+        }
+    }
+
+    fn refresh_shell(&self) {
+        let dir = self.models_dir();
+        self.shell.refresh(&View {
+            settings: &self.settings,
+            lang: i18n::resolve(self.settings.ui_language),
+            installed: models::installed(&self.manifest, &dir),
+            active_model: self.model.as_ref().map(|m| m.id.as_str()),
+        });
+    }
+
     fn save_settings(&self) {
         if let Err(e) = settings::save(&self.paths.config_dir, &self.settings) {
             tracing::error!("cannot save settings: {e}");
         }
+    }
+
+    fn save_history(&self) {
+        if let Err(e) = self.history.save() {
+            tracing::error!("cannot save history: {e}");
+        }
+        self.shell.changed(Changed::History);
     }
 
     fn now_ms(&self) -> u64 {

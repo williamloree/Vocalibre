@@ -197,19 +197,32 @@ impl Settings {
             "restore_delay_ms",
             &mut || self.restore_delay_ms = d.restore_delay_ms,
         );
-        check(!self.hotkey.trim().is_empty(), "hotkey", &mut || {
+        check(is_shortcut(&self.hotkey), "hotkey", &mut || {
             self.hotkey = d.hotkey.clone()
         });
+        check(is_shortcut(&self.cancel_key), "cancel_key", &mut || {
+            self.cancel_key = d.cancel_key.clone()
+        });
         check(
-            !self.cancel_key.trim().is_empty(),
+            self.hotkey.to_lowercase() != self.cancel_key.to_lowercase(),
             "cancel_key",
             &mut || self.cancel_key = d.cancel_key.clone(),
+        );
+        check(
+            self.models_dir.as_ref().is_none_or(|p| p.is_absolute()),
+            "models_dir",
+            &mut || self.models_dir = None,
         );
         check(self.vocabulary.len() <= 2000, "vocabulary", &mut || {
             self.vocabulary = d.vocabulary.clone()
         });
         reset
     }
+}
+
+/// Parses with the global shortcut syntax ("Ctrl+Shift+Space", "F9").
+pub fn is_shortcut(s: &str) -> bool {
+    s.parse::<tauri_plugin_global_shortcut::Shortcut>().is_ok()
 }
 
 /// What happened while loading, for logging and user notification.
@@ -284,11 +297,8 @@ fn migrate(mut v: Value) -> Option<Value> {
 
 /// Writes atomically: temp file in the same directory, then rename.
 pub fn save(dir: &Path, settings: &Settings) -> Result<(), SettingsError> {
-    std::fs::create_dir_all(dir)?;
-    let tmp = dir.join(format!("{FILE_NAME}.tmp"));
     let json = serde_json::to_vec_pretty(settings)?;
-    std::fs::write(&tmp, json)?;
-    std::fs::rename(&tmp, dir.join(FILE_NAME))?;
+    crate::fsutil::write_atomic(&dir.join(FILE_NAME), &json)?;
     Ok(())
 }
 
@@ -355,6 +365,28 @@ mod tests {
         assert_eq!(s.language, "auto");
         assert_eq!(s.beam_size, 0);
         assert_eq!(s.hotkey, "Alt+D", "valid values are kept");
+    }
+
+    #[test]
+    fn invalid_shortcuts_and_relative_models_dir_are_reset() {
+        let mut s = Settings {
+            hotkey: "Ctrl+Nope".into(),
+            cancel_key: "".into(),
+            models_dir: Some(PathBuf::from("relative/dir")),
+            ..Settings::default()
+        };
+        let mut reset = s.validate();
+        reset.sort_unstable();
+        assert_eq!(reset, ["cancel_key", "hotkey", "models_dir"]);
+        assert_eq!(s.hotkey, "Ctrl+Space");
+        assert_eq!(s.cancel_key, "Escape");
+        assert_eq!(s.models_dir, None);
+
+        let mut same = Settings {
+            cancel_key: "ctrl+space".into(),
+            ..Settings::default()
+        };
+        assert_eq!(same.validate(), ["cancel_key"]);
     }
 
     #[test]

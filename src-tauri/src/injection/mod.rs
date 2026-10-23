@@ -87,6 +87,12 @@ impl Injector {
         }
     }
 
+    /// Puts `text` in the clipboard (history "copy" button).
+    pub fn copy(&mut self, text: &str) -> Result<(), InjectError> {
+        self.clipboard()?.set_text(text)?;
+        Ok(())
+    }
+
     fn paste(
         &mut self,
         text: &str,

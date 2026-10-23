@@ -1,7 +1,8 @@
 //! Non-regression on WAV fixtures: silence, noise, short/long French, English.
 //!
 //! Needs `ggml-base-q5_1.bin` and `ggml-silero-v6.2.0.bin` in the directory
-//! named by `VOCALIBRE_TEST_MODELS`; skipped otherwise.
+//! named by `VOCALIBRE_TEST_MODELS`; skipped otherwise. `VOCALIBRE_TEST_MODEL`
+//! picks another model file and `VOCALIBRE_TEST_GPU=1` runs it on the GPU.
 
 use std::path::{Path, PathBuf};
 
@@ -56,15 +57,20 @@ async fn fixtures_transcribe_within_wer_threshold() {
         return;
     };
     let models = PathBuf::from(models);
+    let model = std::env::var("VOCALIBRE_TEST_MODEL").unwrap_or("ggml-base-q5_1.bin".into());
+    let use_gpu = std::env::var("VOCALIBRE_TEST_GPU").is_ok_and(|v| v == "1");
+    // Only the small CPU models support the shrunk encoder context.
+    let reduced_audio_ctx = !use_gpu;
     let worker = SttWorker::spawn().unwrap();
-    worker
+    let loaded = worker
         .load(LoadRequest {
-            model_path: models.join("ggml-base-q5_1.bin"),
+            model_path: models.join(&model),
             vad_path: models.join("ggml-silero-v6.2.0.bin"),
-            use_gpu: false,
+            use_gpu,
         })
         .await
         .unwrap();
+    eprintln!("{model}: {loaded:?}");
 
     for (name, lang) in [
         ("silence", "fr"),
@@ -80,7 +86,7 @@ async fn fixtures_transcribe_within_wer_threshold() {
                 audio,
                 TranscribeOptions {
                     language: Some(lang.into()),
-                    reduced_audio_ctx: true,
+                    reduced_audio_ctx,
                     ..TranscribeOptions::default()
                 },
             )
@@ -88,7 +94,7 @@ async fn fixtures_transcribe_within_wer_threshold() {
             .unwrap();
         let text = postprocess::process(&out.text, &postprocess::Options::default());
         let w = wer(&reference, &text);
-        eprintln!("{name}: {w:.1}% «{text}»");
+        eprintln!("{name}: {w:.1}% in {} ms «{text}»", out.inference_ms);
         assert!(w <= MAX_WER, "{name}: WER {w:.1}% > {MAX_WER}% («{text}»)");
     }
 }

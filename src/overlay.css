@@ -34,9 +34,11 @@ body,
   color: var(--pill-fg);
   font-size: 13px;
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08);
+  cursor: grab;
+  white-space: nowrap;
 }
 
-.pill.error .dot {
+.dot.warn {
   background: #f59e0b;
 }
 
