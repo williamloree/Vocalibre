@@ -36,7 +36,12 @@ jobs:
           # Reused when the workflow is re-run after a failure.
           gh release view "$TAG" > /dev/null 2>&1 ||
             gh release create "$TAG" --draft --verify-tag --generate-notes --title "Vocalibre $TAG"
-          id=$(gh api "repos/$GITHUB_REPOSITORY/releases" --jq ".[] | select(.tag_name == \"$TAG\") | .id")
+          # A new draft can take a few seconds to show up in the API.
+          for _ in 1 2 3 4 5; do
+            id=$(gh release view "$TAG" --json databaseId --jq .databaseId) && [ -n "$id" ] && break
+            sleep 5
+          done
+          [ -n "$id" ] || { echo "draft release not found"; exit 1; }
           echo "id=$id" >> "$GITHUB_OUTPUT"
 
   build:
