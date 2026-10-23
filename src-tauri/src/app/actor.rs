@@ -752,6 +752,12 @@ impl<S: Shell> Actor<S> {
                 self.cancel_auto_stop();
                 match self.audio.stop().await {
                     Ok(samples) => {
+                        let peak = samples.iter().fold(0.0_f32, |m, s| m.max(s.abs()));
+                        tracing::info!(samples = samples.len(), peak, "recording stopped");
+                        // A real microphone always picks up some noise.
+                        if !samples.is_empty() && peak < MUTED_PEAK {
+                            self.shell.notice(&Notice::MicSilent);
+                        }
                         self.spawn_transcription(job_id, samples);
                         None
                     }
@@ -923,6 +929,9 @@ impl<S: Shell> Actor<S> {
         self.epoch.elapsed().as_millis() as u64
     }
 }
+
+/// Below -80 dBFS over a whole recording, the input is muted, not quiet.
+const MUTED_PEAK: f32 = 1e-4;
 
 /// How often the download reports progress to the UI.
 const PROGRESS_EVERY: Duration = Duration::from_millis(250);

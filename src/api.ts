@@ -12,7 +12,7 @@ export type AppState =
   | { kind: "error"; error: { code: string; detail: string; retry_model: string | null } };
 
 export type Notice = {
-  code: "device_lost" | "recording_failed" | "transcription_failed";
+  code: "device_lost" | "mic_silent" | "recording_failed" | "transcription_failed";
   detail: string;
 };
 

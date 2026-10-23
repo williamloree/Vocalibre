@@ -3,6 +3,7 @@ const fr = {
     transcribing: "Transcription…",
     notice: {
       device_lost: "Micro débranché",
+      mic_silent: "Micro muet : vérifiez l'autorisation",
       recording_failed: "Micro inaccessible",
       transcription_failed: "Échec de la transcription",
     },

@@ -242,6 +242,7 @@ impl Shell for TauriShell {
     fn notice(&self, notice: &Notice) {
         let (code, detail) = match notice {
             Notice::DeviceLost => ("device_lost", String::new()),
+            Notice::MicSilent => ("mic_silent", String::new()),
             Notice::RecordingFailed(d) => ("recording_failed", d.clone()),
             Notice::TranscriptionFailed(d) => ("transcription_failed", d.clone()),
         };

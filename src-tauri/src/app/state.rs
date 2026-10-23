@@ -103,6 +103,9 @@ pub enum Sound {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Notice {
     DeviceLost,
+    /// The recording is digital silence: the system gives the app a muted
+    /// input, typically the microphone permission refused on macOS.
+    MicSilent,
     RecordingFailed(String),
     TranscriptionFailed(String),
 }

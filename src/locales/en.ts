@@ -5,6 +5,7 @@ const en: Messages = {
     transcribing: "Transcribing…",
     notice: {
       device_lost: "Microphone unplugged",
+      mic_silent: "Microphone silent: check the permission",
       recording_failed: "Microphone unavailable",
       transcription_failed: "Transcription failed",
     },
