@@ -141,7 +141,7 @@ impl Default for Settings {
             cancel_key: "Escape".into(),
             injection_mode: InjectionMode::Paste,
             restore_delay_ms: 300,
-            keep_in_clipboard: false,
+            keep_in_clipboard: true,
             check_updates: true,
             debug_log_text: false,
             overlay_positions: HashMap::new(),

@@ -42,7 +42,8 @@ arrive dans l'application que vous utilisiez déjà (éditeur, navigateur, messa
 - ⚡ **Accélération GPU** (Vulkan sous Windows et Linux, Metal sous macOS), repli automatique sur le processeur.
 - 🤫 **Pas de texte inventé** : une détection de voix (Silero VAD) filtre le silence et le bruit avant Whisper,
   et les phrases parasites connues (« Sous-titres réalisés par… ») sont retirées.
-- 📋 **Presse-papiers préservé** : son contenu (texte ou image) est restauré après le collage.
+- 📋 **Texte gardé dans le presse-papiers** après le collage, pour le recoller ailleurs. Option inverse : restaurer
+  l'ancien contenu (texte ou image).
 - 🔔 **Retours sonores et pilule flottante** : début, fin, transcription terminée ; forme d'onde en direct.
 - 🌍 **Multilingue** : détection automatique de la langue, ou langue forcée. Interface en français et en anglais.
 - 📝 **Vocabulaire et remplacements** : noms propres et jargon mieux reconnus ; « virgule » → `,`, « point à la
@@ -101,7 +102,7 @@ Mesures complètes : [`docs/benchmark.md`](docs/benchmark.md).
 ```text
  Ctrl+Espace ─► Micro (cpal) ─► 16 kHz mono ─► VAD Silero ─► Whisper (GPU) ─► Nettoyage ─► Ctrl+V
                     │                              │                                         │
-              forme d'onde                pas de voix = rien                   presse-papiers restauré
+              forme d'onde                pas de voix = rien                 texte dans le presse-papiers
 ```
 
 - **Une machine à états pure** décide de tout (démarrer, arrêter, annuler, ignorer les appuis trop rapprochés).
@@ -112,7 +113,8 @@ Mesures complètes : [`docs/benchmark.md`](docs/benchmark.md).
   vers 16 kHz se fait à l'arrêt.
 - **Transcription.** Le VAD isole les passages parlés ; s'il n'y en a pas, Whisper n'est pas appelé (c'est sur
   le silence qu'il invente du texte). Recherche en faisceau sur GPU, décodage glouton sur processeur.
-- **Injection.** Sauvegarde du presse-papiers, collage du texte, restauration après 300 ms. Mode *frappe*
+- **Injection.** Collage du texte, qui reste dans le presse-papiers ; si l'option est désactivée, l'ancien
+  contenu est restauré après 300 ms. Mode *frappe*
   disponible pour les applications qui bloquent le collage.
 
 ## Développement
