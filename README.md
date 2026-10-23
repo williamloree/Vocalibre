@@ -50,7 +50,7 @@ arrive dans l'application que vous utilisiez déjà (éditeur, navigateur, messa
 - 📝 **Vocabulaire et remplacements** : noms propres et jargon mieux reconnus ; « virgule » → `,`, « point à la
   ligne » → retour à la ligne.
 - 🕘 **Historique** des 50 dernières dictées, copie en un clic, jamais envoyé nulle part (désactivable).
-- ⚙️ **Paramètres appliqués immédiatement** : raccourci (appuyer ou maintenir pour parler), micro, modèle,
+- ⚙️ **Paramètres appliqués immédiatement** : raccourcis, micro, modèle,
   accélération, mode de collage… sans redémarrer.
 - ⏹️ `Échap` annule une dictée en cours.
 
@@ -79,7 +79,9 @@ installation. À la demande : menu de l'icône › *Rechercher des mises à jour
 | Action | Raccourci |
 |---|---|
 | Démarrer / arrêter la dictée | `Ctrl+Espace` (ou *Démarrer la dictée* dans le menu de l'icône) |
+| Dicter tant que la touche est enfoncée | `F8` |
 | Annuler la dictée en cours | `Échap` |
+| Recoller la dernière dictée | Raccourci à définir dans *Paramètres* › *Raccourcis*, ou menu de l'icône › *Copier la dernière dictée* |
 | Changer de modèle | Clic sur l'icône › *Modèle* |
 | Paramètres, historique | Clic sur l'icône › *Paramètres* ou *Historique* |
 | Déplacer la pilule | Glisser-déposer pendant une dictée (position mémorisée par écran) |

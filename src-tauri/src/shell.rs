@@ -18,7 +18,7 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
 use crate::app::actor::{Changed, Shell, View};
 use crate::app::state::{AppState, Notice};
 use crate::i18n::{self, Lang};
-use crate::settings::OverlayPosition;
+use crate::settings::{OverlayPosition, Shortcuts};
 
 pub const OVERLAY: &str = "overlay";
 pub const MAIN: &str = "main";
@@ -36,15 +36,32 @@ const ICON_RECORDING: &[u8] = include_bytes!("../icons/tray/recording.png");
 const ICON_TRANSCRIBING: &[u8] = include_bytes!("../icons/tray/transcribing.png");
 const ICON_ERROR: &[u8] = include_bytes!("../icons/tray/error.png");
 
-/// The registered shortcuts, read by the global shortcut handler. `None`
-/// until a dictation shortcut was registered successfully.
+/// The registered shortcuts, read by the global shortcut handler.
 #[derive(Default)]
-pub struct Hotkeys(pub Mutex<Option<HotkeyPair>>);
+pub struct Hotkeys(pub Mutex<Bindings>);
 
-#[derive(Clone, Copy)]
-pub struct HotkeyPair {
-    pub main: Shortcut,
-    pub cancel: Shortcut,
+/// What each registered key does. `cancel` is only registered while
+/// recording; the others always are.
+#[derive(Clone, Copy, Default)]
+pub struct Bindings {
+    pub toggle: Option<Shortcut>,
+    pub push_to_talk: Option<Shortcut>,
+    pub paste_last: Option<Shortcut>,
+    pub cancel: Option<Shortcut>,
+}
+
+impl Bindings {
+    fn always_on(&self) -> impl Iterator<Item = Shortcut> {
+        [self.toggle, self.push_to_talk, self.paste_last]
+            .into_iter()
+            .flatten()
+    }
+}
+
+fn parse(key: &Option<String>) -> Result<Option<Shortcut>, String> {
+    key.as_deref()
+        .map(|k| k.parse::<Shortcut>().map_err(|e| format!("{k}: {e}")))
+        .transpose()
 }
 
 #[derive(Clone, Serialize)]
@@ -243,14 +260,14 @@ impl Shell for TauriShell {
 
     fn set_cancel_key(&self, enabled: bool) {
         let state = self.app.state::<Hotkeys>();
-        let Some(pair) = state.0.lock().ok().and_then(|g| *g) else {
+        let Some(cancel) = state.0.lock().ok().and_then(|b| b.cancel) else {
             return;
         };
         let gs = self.app.global_shortcut();
         let result = if enabled {
-            gs.register(pair.cancel)
-        } else if gs.is_registered(pair.cancel) {
-            gs.unregister(pair.cancel)
+            gs.register(cancel)
+        } else if gs.is_registered(cancel) {
+            gs.unregister(cancel)
         } else {
             Ok(())
         };
@@ -260,52 +277,69 @@ impl Shell for TauriShell {
         }
     }
 
-    fn set_hotkeys(&self, main: &str, cancel: &str) -> Result<(), String> {
-        let main: Shortcut = main.parse().map_err(|e| format!("{e}"))?;
-        let cancel: Shortcut = cancel.parse().map_err(|e| format!("{e}"))?;
+    fn set_hotkeys(&self, keys: &Shortcuts) -> Result<(), String> {
+        let wanted = [
+            parse(&keys.toggle)?,
+            parse(&keys.push_to_talk)?,
+            parse(&keys.paste_last)?,
+        ];
+        let cancel = parse(&Some(keys.cancel.clone()))?;
         let state = self.app.state::<Hotkeys>();
-        let mut current = state.0.lock().map_err(|_| "hotkeys poisoned".to_string())?;
+        let mut bindings = state.0.lock().map_err(|_| "hotkeys poisoned".to_string())?;
         let gs = self.app.global_shortcut();
-        let previous = *current;
-        if let Some(p) = previous {
-            if p.main == main {
-                *current = Some(HotkeyPair { main, cancel });
-                return Ok(());
-            }
-            if gs.is_registered(p.main) {
-                let _ = gs.unregister(p.main);
+        let old = *bindings;
+        let slots = [old.toggle, old.push_to_talk, old.paste_last];
+        // Free every key first, so two slots can swap keys.
+        for key in slots.iter().flatten() {
+            if gs.is_registered(*key) {
+                let _ = gs.unregister(*key);
             }
         }
-        match gs.register(main) {
-            Ok(()) => {
-                *current = Some(HotkeyPair { main, cancel });
-                Ok(())
-            }
-            Err(e) => {
-                // Roll back: the old shortcut keeps working.
-                if let Some(p) = previous {
-                    if let Err(e) = gs.register(p.main) {
-                        tracing::error!("cannot restore previous hotkey: {e}");
+        let mut now = [None; 3];
+        let mut errors = Vec::new();
+        for (i, (new, old)) in wanted.iter().zip(slots).enumerate() {
+            let Some(new) = new else { continue };
+            match gs.register(*new) {
+                Ok(()) => now[i] = Some(*new),
+                Err(e) => {
+                    errors.push(format!("{}: {e}", new.into_string()));
+                    // This slot keeps its previous key.
+                    if let Some(old) = old.filter(|o| !gs.is_registered(*o)) {
+                        if gs.register(old).is_ok() {
+                            now[i] = Some(old);
+                        }
                     }
                 }
-                Err(e.to_string())
             }
+        }
+        *bindings = Bindings {
+            toggle: now[0],
+            push_to_talk: now[1],
+            paste_last: now[2],
+            cancel,
+        };
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors.join(", "))
         }
     }
 
     fn suspend_hotkey(&self, suspended: bool) {
         let state = self.app.state::<Hotkeys>();
-        let Some(pair) = state.0.lock().ok().and_then(|g| *g) else {
+        let Some(bindings) = state.0.lock().ok().map(|b| *b) else {
             return;
         };
         let gs = self.app.global_shortcut();
-        let result = match (suspended, gs.is_registered(pair.main)) {
-            (true, true) => gs.unregister(pair.main),
-            (false, false) => gs.register(pair.main),
-            _ => Ok(()),
-        };
-        if let Err(e) = result {
-            tracing::warn!("suspend hotkey: {e}");
+        for key in bindings.always_on() {
+            let result = match (suspended, gs.is_registered(key)) {
+                (true, true) => gs.unregister(key),
+                (false, false) => gs.register(key),
+                _ => Ok(()),
+            };
+            if let Err(e) = result {
+                tracing::warn!("suspend hotkey: {e}");
+            }
         }
     }
 
@@ -315,7 +349,12 @@ impl Shell for TauriShell {
         };
         let lang_changed = c.lang != view.lang;
         c.lang = view.lang;
-        c.hotkey = view.settings.hotkey.clone();
+        let s = view.settings;
+        c.hotkey = [s.hotkey.as_deref(), s.ptt_hotkey.as_deref()]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" / ");
         c.overlay_enabled = view.settings.overlay_enabled;
         c.overlay_positions = view.settings.overlay_positions.clone();
         match build_menu(&self.app, view) {
@@ -385,6 +424,13 @@ fn build_menu(app: &AppHandle, view: &View<'_>) -> tauri::Result<(Menu<Wry>, Tra
             &retry,
             &model_menu,
             &PredefinedMenuItem::separator(app)?,
+            &MenuItem::with_id(
+                app,
+                "copy_last",
+                s.copy_last,
+                view.has_last_text,
+                None::<&str>,
+            )?,
             &item("history", s.history)?,
             &item("settings", s.settings)?,
             &item("logs_dir", s.open_logs)?,

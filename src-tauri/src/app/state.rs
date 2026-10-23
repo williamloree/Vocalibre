@@ -51,7 +51,9 @@ pub enum AppState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Input {
-    HotkeyPressed,
+    /// One of the two dictation shortcuts, with the mode it starts.
+    HotkeyPressed(RecordingMode),
+    /// The push-to-talk shortcut was released.
     HotkeyReleased,
     /// Escape during recording.
     Cancel,
@@ -151,18 +153,12 @@ impl Machine {
         &self.state
     }
 
-    /// Applies `input` at monotonic time `now_ms`. `mode` is the current
-    /// setting; it is captured when a recording starts.
-    pub fn handle(
-        &mut self,
-        input: Input,
-        now_ms: u64,
-        mode: RecordingMode,
-    ) -> Result<Vec<Effect>, Ignored> {
+    /// Applies `input` at monotonic time `now_ms`.
+    pub fn handle(&mut self, input: Input, now_ms: u64) -> Result<Vec<Effect>, Ignored> {
         use AppState as S;
         use Input as I;
 
-        if input == I::HotkeyPressed {
+        if matches!(input, I::HotkeyPressed(_)) {
             if let Some(last) = self.last_press_ms {
                 if now_ms.saturating_sub(last) < DEBOUNCE_MS {
                     return Err(Ignored::Debounced);
@@ -172,16 +168,17 @@ impl Machine {
 
         let (next, effects) = match (&self.state, input) {
             // Start recording.
-            (S::Idle, I::HotkeyPressed) => self.start(now_ms, mode),
+            (S::Idle, I::HotkeyPressed(mode)) => self.start(now_ms, mode),
             (S::Idle, I::ToggleRequested) => self.start(now_ms, RecordingMode::Toggle),
 
-            // Stop recording.
+            // Stop recording: a toggle recording stops on either shortcut,
+            // a push-to-talk one only when its key is released.
             (
                 S::Recording {
                     started_at_ms,
                     mode: RecordingMode::Toggle,
                 },
-                I::HotkeyPressed,
+                I::HotkeyPressed(_),
             )
             | (
                 S::Recording {
@@ -374,7 +371,8 @@ mod tests {
 
     fn all_inputs() -> Vec<Input> {
         vec![
-            Input::HotkeyPressed,
+            Input::HotkeyPressed(Toggle),
+            Input::HotkeyPressed(PushToTalk),
             Input::HotkeyReleased,
             Input::Cancel,
             Input::ToggleRequested,
@@ -417,9 +415,9 @@ mod tests {
             model_id: "m".into(),
         };
         match (state, input) {
-            (S::Idle, I::HotkeyPressed) => Some(rec(Toggle)),
+            (S::Idle, I::HotkeyPressed(mode)) => Some(rec(*mode)),
             (S::Idle, I::ToggleRequested) => Some(rec(Toggle)),
-            (S::Recording { mode: Toggle, .. }, I::HotkeyPressed)
+            (S::Recording { mode: Toggle, .. }, I::HotkeyPressed(_))
             | (
                 S::Recording {
                     mode: PushToTalk, ..
@@ -449,7 +447,7 @@ mod tests {
         for state in all_states() {
             for input in all_inputs() {
                 let mut m = Machine::new(state.clone());
-                let result = m.handle(input.clone(), 10_000, Toggle);
+                let result = m.handle(input.clone(), 10_000);
                 let want = expected(&state, &input);
                 match want {
                     Some(next) => {
@@ -477,7 +475,7 @@ mod tests {
     #[test]
     fn toggle_full_cycle_emits_expected_effects() {
         let mut m = Machine::new(AppState::Idle);
-        let fx = m.handle(Input::HotkeyPressed, 1_000, Toggle).unwrap();
+        let fx = m.handle(Input::HotkeyPressed(Toggle), 1_000).unwrap();
         assert_eq!(
             fx,
             vec![
@@ -486,7 +484,7 @@ mod tests {
                 Effect::Play(Sound::Start)
             ]
         );
-        let fx = m.handle(Input::HotkeyPressed, 3_000, Toggle).unwrap();
+        let fx = m.handle(Input::HotkeyPressed(Toggle), 3_000).unwrap();
         assert_eq!(
             fx,
             vec![
@@ -502,7 +500,6 @@ mod tests {
                     has_text: true,
                 },
                 3_500,
-                Toggle,
             )
             .unwrap();
         assert_eq!(fx, vec![Effect::Play(Sound::Done)]);
@@ -519,7 +516,6 @@ mod tests {
                     has_text: false,
                 },
                 0,
-                Toggle,
             )
             .unwrap();
         assert!(fx.is_empty());
@@ -530,7 +526,7 @@ mod tests {
     fn press_during_transcription_is_ignored() {
         let mut m = Machine::new(AppState::Transcribing { job_id: 1 });
         assert_eq!(
-            m.handle(Input::HotkeyPressed, 10_000, Toggle),
+            m.handle(Input::HotkeyPressed(Toggle), 10_000),
             Err(Ignored::NotApplicable)
         );
         assert_eq!(m.state(), &AppState::Transcribing { job_id: 1 });
@@ -539,9 +535,9 @@ mod tests {
     #[test]
     fn presses_within_debounce_are_ignored() {
         let mut m = Machine::new(AppState::Idle);
-        m.handle(Input::HotkeyPressed, 1_000, Toggle).unwrap();
+        m.handle(Input::HotkeyPressed(Toggle), 1_000).unwrap();
         assert_eq!(
-            m.handle(Input::HotkeyPressed, 1_000 + DEBOUNCE_MS - 1, Toggle),
+            m.handle(Input::HotkeyPressed(Toggle), 1_000 + DEBOUNCE_MS - 1),
             Err(Ignored::Debounced)
         );
         assert!(matches!(m.state(), AppState::Recording { .. }));
@@ -550,32 +546,38 @@ mod tests {
     #[test]
     fn too_short_recording_is_discarded() {
         let mut m = Machine::new(AppState::Idle);
-        m.handle(Input::HotkeyPressed, 0, PushToTalk).unwrap();
+        m.handle(Input::HotkeyPressed(PushToTalk), 0).unwrap();
         let fx = m
-            .handle(Input::HotkeyReleased, MIN_RECORDING_MS - 1, PushToTalk)
+            .handle(Input::HotkeyReleased, MIN_RECORDING_MS - 1)
             .unwrap();
         assert!(fx.contains(&Effect::DiscardRecording));
         assert_eq!(m.state(), &AppState::Idle);
     }
 
     #[test]
-    fn push_to_talk_ignores_release_in_toggle_mode_and_press_in_ptt_mode() {
+    fn push_to_talk_recording_stops_only_on_release() {
         let mut m = Machine::new(AppState::Idle);
-        m.handle(Input::HotkeyPressed, 0, PushToTalk).unwrap();
-        assert_eq!(
-            m.handle(Input::HotkeyPressed, 1_000, PushToTalk),
-            Err(Ignored::NotApplicable)
-        );
-        m.handle(Input::HotkeyReleased, 2_000, PushToTalk).unwrap();
+        m.handle(Input::HotkeyPressed(PushToTalk), 0).unwrap();
+        for mode in [PushToTalk, Toggle] {
+            assert_eq!(
+                m.handle(Input::HotkeyPressed(mode), 1_000),
+                Err(Ignored::NotApplicable),
+                "{mode:?} press while holding push-to-talk"
+            );
+        }
+        m.handle(Input::HotkeyReleased, 2_000).unwrap();
         assert_eq!(m.state(), &AppState::Transcribing { job_id: 1 });
     }
 
     #[test]
-    fn mode_is_captured_at_start() {
+    fn toggle_recording_ignores_release_and_stops_on_either_shortcut() {
         let mut m = Machine::new(AppState::Idle);
-        m.handle(Input::HotkeyPressed, 0, PushToTalk).unwrap();
-        // Setting switched to Toggle mid-recording: release still stops.
-        m.handle(Input::HotkeyReleased, 1_000, Toggle).unwrap();
+        m.handle(Input::HotkeyPressed(Toggle), 0).unwrap();
+        assert_eq!(
+            m.handle(Input::HotkeyReleased, 1_000),
+            Err(Ignored::NotApplicable)
+        );
+        m.handle(Input::HotkeyPressed(PushToTalk), 2_000).unwrap();
         assert_eq!(m.state(), &AppState::Transcribing { job_id: 1 });
     }
 
@@ -588,8 +590,7 @@ mod tests {
                     job_id: 1,
                     has_text: true
                 },
-                0,
-                Toggle
+                0
             ),
             Err(Ignored::StaleJob)
         );
@@ -600,8 +601,8 @@ mod tests {
         let mut m = Machine::new(AppState::Idle);
         for expected in 1..=3 {
             let t = expected * 10_000;
-            m.handle(Input::HotkeyPressed, t, Toggle).unwrap();
-            m.handle(Input::HotkeyPressed, t + 1_000, Toggle).unwrap();
+            m.handle(Input::HotkeyPressed(Toggle), t).unwrap();
+            m.handle(Input::HotkeyPressed(Toggle), t + 1_000).unwrap();
             assert_eq!(m.state(), &AppState::Transcribing { job_id: expected });
             m.handle(
                 Input::TranscriptionFinished {
@@ -609,7 +610,6 @@ mod tests {
                     has_text: true,
                 },
                 t + 2_000,
-                Toggle,
             )
             .unwrap();
         }
@@ -623,7 +623,6 @@ mod tests {
                 model_id: "a".into(),
             },
             0,
-            Toggle,
         )
         .unwrap();
         m.handle(
@@ -632,10 +631,9 @@ mod tests {
                 detail: "gpu".into(),
             },
             0,
-            Toggle,
         )
         .unwrap();
-        let fx = m.handle(Input::Retry, 0, Toggle).unwrap();
+        let fx = m.handle(Input::Retry, 0).unwrap();
         assert_eq!(
             fx,
             vec![Effect::LoadModel {
@@ -647,7 +645,6 @@ mod tests {
                 model_id: "a".into(),
             },
             0,
-            Toggle,
         )
         .unwrap();
         assert_eq!(m.state(), &AppState::Idle);
@@ -663,8 +660,7 @@ mod tests {
                 Input::ModelLoaded {
                     model_id: "a".into()
                 },
-                0,
-                Toggle
+                0
             )
             .is_err());
     }
@@ -672,8 +668,8 @@ mod tests {
     #[test]
     fn device_lost_transcribes_and_notifies() {
         let mut m = Machine::new(AppState::Idle);
-        m.handle(Input::HotkeyPressed, 0, Toggle).unwrap();
-        let fx = m.handle(Input::AudioDeviceLost, 1_000, Toggle).unwrap();
+        m.handle(Input::HotkeyPressed(Toggle), 0).unwrap();
+        let fx = m.handle(Input::AudioDeviceLost, 1_000).unwrap();
         assert!(fx.contains(&Effect::StopAndTranscribe { job_id: 1 }));
         assert!(fx.contains(&Effect::Notify(Notice::DeviceLost)));
     }

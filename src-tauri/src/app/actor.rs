@@ -18,7 +18,7 @@ use crate::i18n::{self, Lang};
 use crate::injection::{self, Injector, LastInjection};
 use crate::models::manifest::{Manifest, ModelInfo};
 use crate::models::{self};
-use crate::settings::{self, Acceleration, OverlayPosition, Settings};
+use crate::settings::{self, Acceleration, OverlayPosition, Settings, Shortcuts};
 use crate::sound::Player;
 use crate::stt::postprocess;
 use crate::stt::whisper::{
@@ -31,6 +31,7 @@ pub struct View<'a> {
     pub lang: Lang,
     pub installed: Vec<&'a ModelInfo>,
     pub active_model: Option<&'a str>,
+    pub has_last_text: bool,
 }
 
 /// Window events telling the UI to refetch.
@@ -47,10 +48,10 @@ pub trait Shell: Send + 'static {
     fn level(&self, level: f32);
     fn notice(&self, notice: &Notice);
     fn set_cancel_key(&self, enabled: bool);
-    /// Registers `main` as the dictation shortcut and remembers `cancel`.
-    /// On failure the previous shortcuts stay active.
-    fn set_hotkeys(&self, main: &str, cancel: &str) -> Result<(), String>;
-    /// Releases the dictation shortcut while the UI captures a new one.
+    /// Registers the shortcuts and remembers the cancel key. Each one that
+    /// cannot be registered keeps its previous key; the error lists them.
+    fn set_hotkeys(&self, keys: &Shortcuts) -> Result<(), String>;
+    /// Releases the shortcuts while the UI captures a new one.
     fn suspend_hotkey(&self, suspended: bool);
     /// Settings, installed models or the active model changed.
     fn refresh(&self, view: &View<'_>);
@@ -110,6 +111,10 @@ pub enum Msg {
     UpdateSettings(Box<Settings>, Reply<Result<Settings, String>>),
     ResetSettings(Reply<Result<Settings, String>>),
     SuspendHotkey(bool),
+    /// Pastes the last dictation again (its own shortcut).
+    PasteLast,
+    /// Puts the last dictation in the clipboard (tray).
+    CopyLast,
     GetModels(Reply<Vec<ModelEntry>>),
     DeleteModel(String, Reply<Result<(), String>>),
     Benchmark(Reply<Result<BenchResult, String>>),
@@ -156,6 +161,8 @@ pub struct Actor<S: Shell> {
     reload_pending: bool,
     hotkey_error: Option<String>,
     last_injection: Option<LastInjection>,
+    /// Last dictated text, in memory only (kept even with history off).
+    last_text: Option<String>,
     auto_stop: Option<JoinHandle<()>>,
     epoch: Instant,
     shell: S,
@@ -187,6 +194,7 @@ impl<S: Shell> Actor<S> {
             reload_pending: true,
             hotkey_error: None,
             last_injection: None,
+            last_text: None,
             auto_stop: None,
             epoch: Instant::now(),
             shell,
@@ -199,12 +207,9 @@ impl<S: Shell> Actor<S> {
         if let Err(e) = std::fs::create_dir_all(&models_dir) {
             tracing::error!(dir = %models_dir.display(), "cannot create models directory: {e}");
         }
-        self.hotkey_error = self
-            .shell
-            .set_hotkeys(&self.settings.hotkey, &self.settings.cancel_key)
-            .err();
+        self.hotkey_error = self.shell.set_hotkeys(&self.settings.shortcuts()).err();
         if let Some(e) = &self.hotkey_error {
-            tracing::error!(hotkey = %self.settings.hotkey, "cannot register hotkey: {e}");
+            tracing::error!("cannot register shortcuts: {e}");
         }
         self.refresh_shell();
         self.shell.state_changed(self.machine.state());
@@ -249,6 +254,21 @@ impl<S: Shell> Actor<S> {
                 let _ = reply.send(result);
             }
             Msg::SuspendHotkey(suspended) => self.shell.suspend_hotkey(suspended),
+            Msg::PasteLast => self.paste_last().await,
+            Msg::CopyLast => {
+                if let Some(text) = self.last_text.clone() {
+                    let injector = self.injector.clone();
+                    tokio::task::spawn_blocking(move || {
+                        let copied = injector
+                            .lock()
+                            .map_err(|_| "injector poisoned".to_string())
+                            .and_then(|mut i| i.copy(&text).map_err(|e| e.to_string()));
+                        if let Err(e) = copied {
+                            tracing::warn!("cannot copy last dictation: {e}");
+                        }
+                    });
+                }
+            }
             Msg::GetModels(reply) => {
                 let _ = reply.send(self.model_entries());
             }
@@ -362,6 +382,9 @@ impl<S: Shell> Actor<S> {
                     .dispatch(Input::TranscriptionFailed { job_id, detail })
                     .await;
             }
+            if self.last_text.replace(text.clone()).is_none() {
+                self.refresh_shell();
+            }
             if self.settings.history_enabled {
                 self.history.push(history::Entry {
                     id: 0,
@@ -389,6 +412,31 @@ impl<S: Shell> Actor<S> {
             text
         };
         let ended_with_space = injection::ends_with_space(&text);
+        self.inject_raw(text).await?;
+        self.last_injection = Some(LastInjection {
+            at_ms: self.now_ms(),
+            ended_with_space,
+        });
+        Ok(())
+    }
+
+    /// Pastes the last dictation again, as it was (no automatic space),
+    /// typically after it went to the wrong window.
+    async fn paste_last(&mut self) {
+        if !matches!(self.machine.state(), AppState::Idle) {
+            return;
+        }
+        let Some(text) = self.last_text.clone() else {
+            return;
+        };
+        if let Err(e) = self.inject_raw(text).await {
+            tracing::warn!("cannot paste last dictation: {e}");
+            self.shell
+                .notice(&Notice::TranscriptionFailed(e.to_string()));
+        }
+    }
+
+    async fn inject_raw(&self, text: String) -> Result<(), String> {
         let injector = self.injector.clone();
         let s = &self.settings;
         let (mode, delay, keep) = (s.injection_mode, s.restore_delay_ms, s.keep_in_clipboard);
@@ -400,12 +448,7 @@ impl<S: Shell> Actor<S> {
                 .map_err(|e| e.to_string())
         })
         .await
-        .map_err(|e| e.to_string())??;
-        self.last_injection = Some(LastInjection {
-            at_ms: self.now_ms(),
-            ended_with_space,
-        });
-        Ok(())
+        .map_err(|e| e.to_string())?
     }
 
     /// Validates, applies and saves `new`. Fields the UI does not own are
@@ -421,10 +464,14 @@ impl<S: Shell> Actor<S> {
         new.overlay_positions = old.overlay_positions.clone();
         new.onboarding_done = old.onboarding_done;
 
-        if new.hotkey != old.hotkey || new.cancel_key != old.cancel_key {
-            self.shell
-                .set_hotkeys(&new.hotkey, &new.cancel_key)
-                .map_err(|e| format!("hotkey:{e}"))?;
+        if new.shortcuts() != old.shortcuts() {
+            if let Err(e) = self.shell.set_hotkeys(&new.shortcuts()) {
+                // All or nothing: put back the keys that did change.
+                if let Err(e) = self.shell.set_hotkeys(&old.shortcuts()) {
+                    tracing::error!("cannot restore shortcuts: {e}");
+                }
+                return Err(format!("hotkey:{e}"));
+            }
             self.hotkey_error = None;
         }
         let reload = new.acceleration != old.acceleration || new.models_dir != old.models_dir;
@@ -504,8 +551,7 @@ impl<S: Shell> Actor<S> {
         let mut queue = VecDeque::from([first]);
         while let Some(input) = queue.pop_front() {
             let now = self.now_ms();
-            let mode = self.settings.recording_mode;
-            match self.machine.handle(input.clone(), now, mode) {
+            match self.machine.handle(input.clone(), now) {
                 Ok(effects) => {
                     tracing::debug!(?input, state = ?self.machine.state(), "transition");
                     self.shell.state_changed(self.machine.state());
@@ -715,6 +761,7 @@ impl<S: Shell> Actor<S> {
             lang: i18n::resolve(self.settings.ui_language),
             installed: models::installed(&self.manifest, &dir),
             active_model: self.model.as_ref().map(|m| m.id.as_str()),
+            has_last_text: self.last_text.is_some(),
         });
     }
 

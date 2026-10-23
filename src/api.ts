@@ -44,8 +44,10 @@ export type Settings = {
   max_duration_s: number;
   silence_auto_stop: boolean;
   silence_timeout_s: number;
-  hotkey: string;
-  recording_mode: RecordingMode;
+  /** `null` = disabled; at least one of the two dictation shortcuts is set. */
+  hotkey: string | null;
+  ptt_hotkey: string | null;
+  paste_last_hotkey: string | null;
   cancel_key: string;
   injection_mode: "paste" | "type";
   restore_delay_ms: number;

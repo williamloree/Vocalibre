@@ -18,7 +18,7 @@ use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_global_shortcut::{Shortcut, ShortcutEvent, ShortcutState};
 
 use app::actor::{Actor, ActorTx, Msg, Paths};
-use app::state::Input;
+use app::state::{Input, RecordingMode};
 use models::manifest::Manifest;
 use settings::{LoadOutcome, Settings};
 use shell::{Hotkeys, TauriShell};
@@ -146,22 +146,22 @@ fn send(app: &AppHandle, msg: Msg) {
 
 fn on_shortcut(app: &AppHandle, shortcut: &Shortcut, event: ShortcutEvent) {
     let state = app.state::<Hotkeys>();
-    let Some(keys) = state.0.lock().ok().and_then(|g| *g) else {
+    let Some(keys) = state.0.lock().ok().map(|b| *b) else {
         return;
     };
+    let is = |key: Option<Shortcut>| key == Some(*shortcut);
     let pressed = event.state == ShortcutState::Pressed;
-    let input = if *shortcut == keys.main {
-        if pressed {
-            Input::HotkeyPressed
-        } else {
-            Input::HotkeyReleased
+    let msg = match pressed {
+        true if is(keys.toggle) => Msg::Input(Input::HotkeyPressed(RecordingMode::Toggle)),
+        true if is(keys.push_to_talk) => {
+            Msg::Input(Input::HotkeyPressed(RecordingMode::PushToTalk))
         }
-    } else if *shortcut == keys.cancel && pressed {
-        Input::Cancel
-    } else {
-        return;
+        false if is(keys.push_to_talk) => Msg::Input(Input::HotkeyReleased),
+        true if is(keys.paste_last) => Msg::PasteLast,
+        true if is(keys.cancel) => Msg::Input(Input::Cancel),
+        _ => return,
     };
-    send(app, Msg::Input(input));
+    send(app, msg);
 }
 
 fn on_menu(app: &AppHandle, id: &str) {
@@ -169,6 +169,7 @@ fn on_menu(app: &AppHandle, id: &str) {
         "toggle" => send(app, Msg::Input(Input::ToggleRequested)),
         "retry" => send(app, Msg::Input(Input::Retry)),
         "history" => shell::open_main(app, "history"),
+        "copy_last" => send(app, Msg::CopyLast),
         "settings" => shell::open_main(app, "general"),
         "logs_dir" => {
             if let Err(e) = commands::open_logs_dir(app.clone()) {

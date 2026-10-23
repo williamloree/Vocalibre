@@ -7,10 +7,9 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::app::state::RecordingMode;
 use crate::stt::postprocess::Replacement;
 
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 pub const FILE_NAME: &str = "settings.json";
 
 #[derive(Debug, thiserror::Error)]
@@ -91,9 +90,13 @@ pub struct Settings {
     pub silence_auto_stop: bool,
     pub silence_timeout_s: u32,
 
-    // Shortcuts
-    pub hotkey: String,
-    pub recording_mode: RecordingMode,
+    // Shortcuts. `None` = disabled; at least one dictation shortcut is set.
+    /// Press to start, press to stop.
+    pub hotkey: Option<String>,
+    /// Hold to talk.
+    pub ptt_hotkey: Option<String>,
+    /// Pastes the last dictation again.
+    pub paste_last_hotkey: Option<String>,
     pub cancel_key: String,
 
     // Injection
@@ -136,8 +139,9 @@ impl Default for Settings {
             max_duration_s: 300,
             silence_auto_stop: false,
             silence_timeout_s: 3,
-            hotkey: "Ctrl+Space".into(),
-            recording_mode: RecordingMode::Toggle,
+            hotkey: Some(DEFAULT_HOTKEY.into()),
+            ptt_hotkey: Some(DEFAULT_PTT_HOTKEY.into()),
+            paste_last_hotkey: None,
             cancel_key: "Escape".into(),
             injection_mode: InjectionMode::Paste,
             restore_delay_ms: 300,
@@ -149,6 +153,18 @@ impl Default for Settings {
     }
 }
 
+pub const DEFAULT_HOTKEY: &str = "Ctrl+Space";
+pub const DEFAULT_PTT_HOTKEY: &str = "F8";
+
+/// The global shortcuts to register. `cancel` is only active while recording.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Shortcuts {
+    pub toggle: Option<String>,
+    pub push_to_talk: Option<String>,
+    pub paste_last: Option<String>,
+    pub cancel: String,
+}
+
 /// Languages accepted for `language` (Whisper codes), besides "auto".
 pub const LANGUAGES: &[&str] = &[
     "fr", "en", "de", "es", "it", "pt", "nl", "pl", "ru", "uk", "cs", "sv", "da", "no", "fi", "el",
@@ -157,6 +173,15 @@ pub const LANGUAGES: &[&str] = &[
 ];
 
 impl Settings {
+    pub fn shortcuts(&self) -> Shortcuts {
+        Shortcuts {
+            toggle: self.hotkey.clone(),
+            push_to_talk: self.ptt_hotkey.clone(),
+            paste_last: self.paste_last_hotkey.clone(),
+            cancel: self.cancel_key.clone(),
+        }
+    }
+
     /// Replaces out-of-range values by their default. Returns the names of
     /// the fields that were reset.
     pub fn validate(&mut self) -> Vec<&'static str> {
@@ -197,16 +222,51 @@ impl Settings {
             "restore_delay_ms",
             &mut || self.restore_delay_ms = d.restore_delay_ms,
         );
-        check(is_shortcut(&self.hotkey), "hotkey", &mut || {
-            self.hotkey = d.hotkey.clone()
+        let valid = |k: &Option<String>| k.as_deref().is_none_or(is_shortcut);
+        check(valid(&self.hotkey), "hotkey", &mut || self.hotkey = None);
+        check(valid(&self.ptt_hotkey), "ptt_hotkey", &mut || {
+            self.ptt_hotkey = None
         });
+        check(
+            valid(&self.paste_last_hotkey),
+            "paste_last_hotkey",
+            &mut || self.paste_last_hotkey = None,
+        );
         check(is_shortcut(&self.cancel_key), "cancel_key", &mut || {
             self.cancel_key = d.cancel_key.clone()
         });
+        // Each key does one thing: a later duplicate of an earlier key is
+        // turned off (the cancel key goes back to its default instead).
+        let same = |a: &Option<String>, b: &str| a.as_deref().is_some_and(|a| same_key(a, b));
+        let toggle = self.hotkey.clone();
         check(
-            self.hotkey.to_lowercase() != self.cancel_key.to_lowercase(),
+            !self.ptt_hotkey.as_deref().is_some_and(|p| same(&toggle, p)),
+            "ptt_hotkey",
+            &mut || self.ptt_hotkey = None,
+        );
+        let dictation = [self.hotkey.clone(), self.ptt_hotkey.clone()];
+        check(
+            !self
+                .paste_last_hotkey
+                .as_deref()
+                .is_some_and(|k| dictation.iter().any(|d| same(d, k))),
+            "paste_last_hotkey",
+            &mut || self.paste_last_hotkey = None,
+        );
+        let taken = [
+            self.hotkey.clone(),
+            self.ptt_hotkey.clone(),
+            self.paste_last_hotkey.clone(),
+        ];
+        check(
+            !taken.iter().any(|k| same(k, &self.cancel_key)),
             "cancel_key",
             &mut || self.cancel_key = d.cancel_key.clone(),
+        );
+        check(
+            self.hotkey.is_some() || self.ptt_hotkey.is_some(),
+            "hotkey",
+            &mut || self.hotkey = d.hotkey.clone(),
         );
         check(
             self.models_dir.as_ref().is_none_or(|p| p.is_absolute()),
@@ -223,6 +283,15 @@ impl Settings {
 /// Parses with the global shortcut syntax ("Ctrl+Shift+Space", "F9").
 pub fn is_shortcut(s: &str) -> bool {
     s.parse::<tauri_plugin_global_shortcut::Shortcut>().is_ok()
+}
+
+/// Same key combination, whatever the spelling ("ctrl+space", "Control+Space").
+fn same_key(a: &str, b: &str) -> bool {
+    use tauri_plugin_global_shortcut::Shortcut;
+    match (a.parse::<Shortcut>(), b.parse::<Shortcut>()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a.eq_ignore_ascii_case(b),
+    }
 }
 
 /// What happened while loading, for logging and user notification.
@@ -291,6 +360,29 @@ fn migrate(mut v: Value) -> Option<Value> {
             obj.insert("recording_mode".into(), mode.into());
         }
     }
+    if version < 2 {
+        // v1 had one shortcut and a mode; v2 has one shortcut per mode.
+        // Hold-to-talk users keep their key for it and get the default
+        // toggle shortcut; others get the default hold-to-talk key.
+        let ptt = obj
+            .remove("recording_mode")
+            .and_then(|m| m.as_str().map(str::to_owned))
+            == Some("push_to_talk".into());
+        let hotkey = obj
+            .remove("hotkey")
+            .and_then(|h| h.as_str().map(str::to_owned));
+        let hotkey = hotkey.unwrap_or_else(|| DEFAULT_HOTKEY.into());
+        let (toggle, hold) = if ptt {
+            let toggle = (!same_key(&hotkey, DEFAULT_HOTKEY)).then(|| DEFAULT_HOTKEY.to_owned());
+            (toggle, Some(hotkey))
+        } else {
+            let hold =
+                (!same_key(&hotkey, DEFAULT_PTT_HOTKEY)).then(|| DEFAULT_PTT_HOTKEY.to_owned());
+            (Some(hotkey), hold)
+        };
+        obj.insert("hotkey".into(), toggle.into());
+        obj.insert("ptt_hotkey".into(), hold.into());
+    }
     obj.insert("schema_version".into(), SCHEMA_VERSION.into());
     Some(v)
 }
@@ -319,7 +411,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut s = Settings {
             language: "fr".into(),
-            recording_mode: RecordingMode::PushToTalk,
+            ptt_hotkey: None,
+            paste_last_hotkey: Some("Ctrl+Shift+V".into()),
             ..Settings::default()
         };
         s.overlay_positions
@@ -356,7 +449,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join(FILE_NAME),
-            r#"{"schema_version":1,"sound_volume":7,"language":"klingon","beam_size":42,"hotkey":"Alt+D"}"#,
+            r#"{"schema_version":2,"sound_volume":7,"language":"klingon","beam_size":42,"hotkey":"Alt+D"}"#,
         )
         .unwrap();
         let (s, outcome) = load(dir.path());
@@ -364,29 +457,63 @@ mod tests {
         assert_eq!(s.sound_volume, 0.5);
         assert_eq!(s.language, "auto");
         assert_eq!(s.beam_size, 0);
-        assert_eq!(s.hotkey, "Alt+D", "valid values are kept");
+        assert_eq!(s.hotkey.as_deref(), Some("Alt+D"), "valid values are kept");
     }
 
     #[test]
     fn invalid_shortcuts_and_relative_models_dir_are_reset() {
         let mut s = Settings {
-            hotkey: "Ctrl+Nope".into(),
+            hotkey: Some("Ctrl+Nope".into()),
+            paste_last_hotkey: Some("Nope".into()),
             cancel_key: "".into(),
             models_dir: Some(PathBuf::from("relative/dir")),
             ..Settings::default()
         };
         let mut reset = s.validate();
         reset.sort_unstable();
-        assert_eq!(reset, ["cancel_key", "hotkey", "models_dir"]);
-        assert_eq!(s.hotkey, "Ctrl+Space");
+        assert_eq!(
+            reset,
+            ["cancel_key", "hotkey", "models_dir", "paste_last_hotkey"]
+        );
+        assert_eq!(s.hotkey, None, "an invalid key is turned off");
+        assert_eq!(s.ptt_hotkey.as_deref(), Some("F8"));
+        assert_eq!(s.paste_last_hotkey, None);
         assert_eq!(s.cancel_key, "Escape");
         assert_eq!(s.models_dir, None);
+    }
 
-        let mut same = Settings {
+    #[test]
+    fn a_key_does_one_thing() {
+        let mut s = Settings {
+            ptt_hotkey: Some("control+space".into()),
+            paste_last_hotkey: Some("Ctrl+Space".into()),
             cancel_key: "ctrl+space".into(),
             ..Settings::default()
         };
-        assert_eq!(same.validate(), ["cancel_key"]);
+        let mut reset = s.validate();
+        reset.sort_unstable();
+        assert_eq!(reset, ["cancel_key", "paste_last_hotkey", "ptt_hotkey"]);
+        assert_eq!(s.hotkey.as_deref(), Some("Ctrl+Space"));
+        assert_eq!(s.ptt_hotkey, None);
+        assert_eq!(s.paste_last_hotkey, None);
+        assert_eq!(s.cancel_key, "Escape");
+    }
+
+    #[test]
+    fn at_least_one_dictation_shortcut() {
+        let mut s = Settings {
+            hotkey: None,
+            ptt_hotkey: None,
+            ..Settings::default()
+        };
+        assert_eq!(s.validate(), ["hotkey"]);
+        assert_eq!(s.hotkey.as_deref(), Some("Ctrl+Space"));
+
+        let mut hold_only = Settings {
+            hotkey: None,
+            ..Settings::default()
+        };
+        assert!(hold_only.validate().is_empty());
     }
 
     #[test]
@@ -394,7 +521,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join(FILE_NAME),
-            r#"{"schema_version":1,"autostart":"yes"}"#,
+            r#"{"schema_version":2,"autostart":"yes"}"#,
         )
         .unwrap();
         assert!(matches!(load(dir.path()).1, LoadOutcome::Corrupt { .. }));
@@ -411,8 +538,37 @@ mod tests {
         let (s, outcome) = load(dir.path());
         assert_eq!(outcome, LoadOutcome::Loaded);
         assert_eq!(s.schema_version, SCHEMA_VERSION);
-        assert_eq!(s.recording_mode, RecordingMode::PushToTalk);
+        assert_eq!(s.ptt_hotkey.as_deref(), Some("Ctrl+Space"));
+        assert_eq!(s.hotkey, None);
         assert_eq!(s.language, "fr");
+    }
+
+    fn migrated(v1: &str) -> Settings {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(FILE_NAME), v1).unwrap();
+        let (s, outcome) = load(dir.path());
+        assert_eq!(outcome, LoadOutcome::Loaded, "{v1}");
+        s
+    }
+
+    #[test]
+    fn migrates_v1_single_shortcut() {
+        let s = migrated(r#"{"schema_version":1,"hotkey":"Alt+D","recording_mode":"toggle"}"#);
+        assert_eq!(s.hotkey.as_deref(), Some("Alt+D"));
+        assert_eq!(s.ptt_hotkey.as_deref(), Some("F8"));
+
+        let s =
+            migrated(r#"{"schema_version":1,"hotkey":"Alt+D","recording_mode":"push_to_talk"}"#);
+        assert_eq!(s.hotkey.as_deref(), Some("Ctrl+Space"));
+        assert_eq!(s.ptt_hotkey.as_deref(), Some("Alt+D"));
+
+        let s = migrated(r#"{"schema_version":1,"hotkey":"F8","recording_mode":"toggle"}"#);
+        assert_eq!(s.hotkey.as_deref(), Some("F8"));
+        assert_eq!(s.ptt_hotkey, None, "no clash with the old key");
+
+        let s = migrated(r#"{"schema_version":1}"#);
+        assert_eq!(s.hotkey.as_deref(), Some("Ctrl+Space"));
+        assert_eq!(s.ptt_hotkey.as_deref(), Some("F8"));
     }
 
     #[test]
@@ -420,7 +576,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join(FILE_NAME),
-            r#"{"schema_version":1,"removed_option":3}"#,
+            r#"{"schema_version":2,"removed_option":3}"#,
         )
         .unwrap();
         assert_eq!(load(dir.path()).1, LoadOutcome::Loaded);

@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { api, type RecordingMode } from "../../api";
+import type { ReactNode } from "react";
+import { api } from "../../api";
 import { useStore } from "../store";
-import { Radios, Row, Section } from "../controls";
+import { Row, Section } from "../controls";
 
 const MODIFIER_CODES = new Set([
   "ControlLeft", "ControlRight", "AltLeft", "AltRight",
@@ -31,19 +32,24 @@ function comboFrom(e: KeyboardEvent): string | null {
 const isFunctionKey = (combo: string) => /^F([1-9]|1\d|2[0-4])$/.test(combo);
 
 /**
- * Captures the next key combination. The dictation shortcut is released
- * meanwhile, otherwise pressing it would start a dictation instead.
+ * Captures the next key combination. The shortcuts are released meanwhile,
+ * otherwise pressing one would start a dictation instead. `onClear` adds a
+ * button turning the shortcut off.
  */
 function ShortcutInput({
   label,
+  hint,
   value,
   requireModifier,
   onChange,
+  onClear,
 }: {
   label: string;
-  value: string;
+  hint?: ReactNode;
+  value: string | null;
   requireModifier: boolean;
   onChange: (combo: string) => void;
+  onClear?: () => void;
 }) {
   const { t } = useTranslation();
   const [capturing, setCapturing] = useState(false);
@@ -73,7 +79,7 @@ function ShortcutInput({
   }, [capturing, requireModifier, onChange, t]);
 
   return (
-    <Row label={label} hint={problem ?? undefined}>
+    <Row label={label} hint={problem ?? hint}>
       {capturing ? (
         <span className="capture">
           <kbd className="pending">{t("shortcuts.press")}</kbd>
@@ -83,10 +89,15 @@ function ShortcutInput({
         </span>
       ) : (
         <span className="capture">
-          <kbd>{value}</kbd>
+          {value ? <kbd>{value}</kbd> : <span className="hint">{t("shortcuts.none")}</span>}
           <button type="button" onClick={() => setCapturing(true)}>
-            {t("shortcuts.change")}
+            {value ? t("shortcuts.change") : t("shortcuts.set")}
           </button>
+          {value && onClear && (
+            <button type="button" className="link" onClick={onClear}>
+              {t("shortcuts.disable")}
+            </button>
+          )}
         </span>
       )}
     </Row>
@@ -99,27 +110,37 @@ export function Shortcuts() {
   return (
     <>
       <Section>
-        <Radios<RecordingMode>
-          label={t("shortcuts.mode")}
-          value={s.recording_mode}
-          options={[
-            { value: "toggle", label: t("shortcuts.toggle") },
-            { value: "push_to_talk", label: t("shortcuts.push_to_talk") },
-          ]}
-          onChange={(recording_mode) => void update({ recording_mode })}
-        />
-      </Section>
-      <Section>
         <ShortcutInput
           label={t("shortcuts.hotkey")}
+          hint={
+            s.hotkey?.toLowerCase() === "ctrl+space" ? t("shortcuts.ctrl_space_hint") : t("shortcuts.hotkey_hint")
+          }
           value={s.hotkey}
           requireModifier
           onChange={(hotkey) => void update({ hotkey })}
+          onClear={s.ptt_hotkey ? () => void update({ hotkey: null }) : undefined}
+        />
+        <ShortcutInput
+          label={t("shortcuts.ptt_hotkey")}
+          hint={t("shortcuts.ptt_hint")}
+          value={s.ptt_hotkey}
+          requireModifier
+          onChange={(ptt_hotkey) => void update({ ptt_hotkey })}
+          onClear={s.hotkey ? () => void update({ ptt_hotkey: null }) : undefined}
         />
         {status?.hotkey_error && (
           <p className="warning">{t("errors.hotkey", { detail: status.hotkey_error })}</p>
         )}
-        {s.hotkey.toLowerCase() === "ctrl+space" && <p className="hint">{t("shortcuts.ctrl_space_hint")}</p>}
+      </Section>
+      <Section>
+        <ShortcutInput
+          label={t("shortcuts.paste_last")}
+          hint={t("shortcuts.paste_last_hint")}
+          value={s.paste_last_hotkey}
+          requireModifier
+          onChange={(paste_last_hotkey) => void update({ paste_last_hotkey })}
+          onClear={() => void update({ paste_last_hotkey: null })}
+        />
         <ShortcutInput
           label={t("shortcuts.cancel_key")}
           value={s.cancel_key}
