@@ -122,6 +122,10 @@ Prérequis : [Rust](https://rustup.rs) 1.85+, [Node.js](https://nodejs.org) 22, 
 et Linux, et [Ninja](https://ninja-build.org) sous Windows. Sous Linux, ajouter les
 [dépendances de Tauri](https://tauri.app/start/prerequisites/) et `libasound2-dev`.
 
+Variables d'environnement attendues : `VULKAN_SDK` (posée par l'installeur du SDK), `LIBCLANG_PATH` vers le
+dossier `bin` de LLVM, et CMake dans le `PATH`. Après les avoir installés, ouvrez un **nouveau** terminal
+(sous VS Code, redémarrez l'éditeur entier) : un terminal déjà ouvert ne les voit pas.
+
 ```sh
 git clone https://github.com/williamloree/Vocalibre.git
 cd Vocalibre
