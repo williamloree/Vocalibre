@@ -579,58 +579,181 @@ a {
   }
 }
 
+/* First-launch assistant: a centred column, one card per step. */
 .welcome {
-  max-width: 640px;
-  margin: 0 auto;
-  padding: 24px 24px 32px;
+  position: relative;
+  display: flex;
+  min-height: 100%;
+  padding: 32px 24px;
+  overflow-y: auto;
 }
 
-.welcome > header {
+.welcome-inner {
+  width: 100%;
+  max-width: 600px;
+  margin: auto;
+}
+
+.welcome-skip {
+  position: absolute;
+  top: 12px;
+  right: 16px;
+}
+
+.welcome-head {
+  text-align: center;
+}
+
+.welcome-head h1 {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 12px;
-}
-
-.welcome > header h1 {
-  flex: 1;
   margin: 0;
+  font-size: 22px;
 }
 
-.steps {
+.welcome-head p {
+  margin: 6px auto 0;
+  max-width: 440px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.stepper {
   display: flex;
-  gap: 16px;
-  margin: 16px 0;
+  justify-content: center;
+  gap: 8px;
+  margin: 20px 0 16px;
   padding: 0;
   list-style: none;
   color: var(--muted);
+  font-size: 13px;
 }
 
-.steps .current {
-  color: var(--accent);
+.stepper li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* The line between two steps. */
+.stepper li + li::before {
+  content: "";
+  width: 32px;
+  height: 1px;
+  background: var(--border);
+}
+
+.stepper-dot {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--surface);
+  font-size: 12px;
   font-weight: 600;
+}
+
+.stepper .current {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.stepper .current .stepper-dot,
+.stepper .done .stepper-dot {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.welcome-card {
+  padding: 24px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.welcome-card h2 {
+  margin: 0 0 4px;
+  font-size: 17px;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--fg);
+}
+
+.welcome-body > * + * {
+  margin-top: 12px;
+}
+
+.welcome-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+}
+
+.tile {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.tile.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.tile-label {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.tile .hint {
+  margin: 0;
 }
 
 button.primary {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--accent-fg);
+  font-weight: 500;
 }
 
 .choices {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  margin: 8px 0;
 }
 
 .choice {
   display: grid;
   grid-template-columns: auto 1fr;
-  column-gap: 10px;
-  padding: 8px 10px;
+  column-gap: 12px;
+  padding: 7px 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   cursor: pointer;
+}
+
+.choice:hover {
+  border-color: var(--accent);
 }
 
 .choice.selected {
@@ -641,6 +764,7 @@ button.primary {
 .choice input {
   grid-row: span 2;
   align-self: center;
+  accent-color: var(--accent);
 }
 
 .choice-name {
@@ -655,16 +779,22 @@ button.primary {
   margin: 0;
 }
 
-.keys {
-  margin: 8px 0;
-  padding-left: 18px;
+.ready {
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--accent-soft);
 }
 
-kbd {
-  padding: 1px 6px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--bg);
-  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
-  font-size: 12.5px;
+.keys {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 0;
+  padding: 0;
+  list-style: none;
+}
+
+textarea.try {
+  padding: 10px 12px;
+  resize: none;
 }
