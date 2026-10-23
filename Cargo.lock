@@ -5513,6 +5513,7 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "whisper-rs",
+ "whisper-rs-sys",
 ]
 
 [[package]]

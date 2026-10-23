@@ -2,6 +2,7 @@ pub mod app;
 pub mod audio;
 pub mod commands;
 pub mod fsutil;
+pub mod hardware;
 pub mod history;
 pub mod i18n;
 pub mod injection;
@@ -61,6 +62,8 @@ pub fn run() {
             commands::download_model,
             commands::cancel_download,
             commands::benchmark,
+            commands::hardware,
+            commands::finish_onboarding,
             commands::list_microphones,
             commands::get_history,
             commands::clear_history,

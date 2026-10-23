@@ -60,13 +60,31 @@ Téléchargez l'installeur de votre système dans les [Releases](https://github.
 
 | Système | Fichier | Remarques |
 |---|---|---|
-| **Windows 10/11** | `Vocalibre_x.y.z_x64-setup.exe` | Sans droits administrateur. Si SmartScreen s'affiche : *Informations complémentaires* › *Exécuter quand même*. |
-| **macOS 11+** Apple Silicon | `Vocalibre_x.y.z_aarch64.dmg` | Application non notarisée : clic droit › *Ouvrir* la première fois. Autoriser le *Micro* et l'*Accessibilité* (pour coller le texte). |
+| **Windows 10/11** | `Vocalibre_x.y.z_x64-setup.exe` | Sans droits administrateur, rien d'autre à installer. Si SmartScreen s'affiche : *Informations complémentaires* › *Exécuter quand même*. |
+| **macOS 11+** Apple Silicon | `Vocalibre_x.y.z_aarch64.dmg` | Voir [Premier lancement sous macOS](#premier-lancement-sous-macos). |
 | **macOS 11+** Intel | `Vocalibre_x.y.z_x64.dmg` | Idem. |
-| **Linux** | `.AppImage`, `.deb`, `.rpm` | Raccourci global et collage sous X11. Mises à jour automatiques avec l'AppImage. |
+| **Linux** | `.AppImage`, `.deb`, `.rpm` | Raccourci global et collage sous X11. Mises à jour automatiques avec l'AppImage. Le `.deb` et le `.rpm` installent le chargeur Vulkan. |
 
-Au premier lancement, ouvrez *Paramètres* › *Modèles* et téléchargez un modèle (voir [Modèles](#modèles)) :
-il devient actif dès la fin du téléchargement.
+Au premier lancement, un assistant détecte la carte graphique, conseille un modèle adapté, le télécharge
+et propose un essai de dictée. La carte graphique la plus puissante est utilisée (Vulkan, ou Metal sur Mac) ;
+sans carte graphique utilisable, Vocalibre passe sur le processeur. Les modèles se gèrent ensuite dans
+*Paramètres* › *Modèles* (voir [Modèles](#modèles)).
+
+### Premier lancement sous macOS
+
+Vocalibre n'est pas signé par Apple (le programme développeur coûte 99 $ par an). macOS bloque donc la
+première ouverture d'une application téléchargée, avec le message « Apple n'a pas pu vérifier que
+« Vocalibre » ne contenait pas de logiciel malveillant » (ou « est endommagé »). Une seule fois :
+
+1. Glissez Vocalibre dans *Applications* et ouvrez-le ; fermez le message.
+2. *Réglages Système* › *Confidentialité et sécurité* : en bas, *Ouvrir quand même* à côté de Vocalibre,
+   puis confirmez avec votre mot de passe.
+
+Ou, dans le Terminal : `xattr -dr com.apple.quarantine /Applications/Vocalibre.app`.
+
+Autorisez ensuite le *Micro* (demandé à la première dictée) et l'*Accessibilité* (*Réglages Système* ›
+*Confidentialité et sécurité* › *Accessibilité*), sans laquelle le texte ne peut pas être collé. Les mises à
+jour installées depuis l'application ne redemandent rien.
 
 **Mises à jour.** Au démarrage puis une fois par jour, Vocalibre regarde si une nouvelle version est publiée ici
 et propose de l'installer ; elle redémarre ensuite toute seule. Les paquets sont signés et vérifiés avant
@@ -147,7 +165,10 @@ npm install
 npm run tauri dev
 ```
 
-Le premier build compile whisper.cpp et ses shaders Vulkan : comptez quelques minutes.
+Le premier build compile whisper.cpp et ses shaders Vulkan : comptez quelques minutes. Sous Windows,
+`npm run tauri ...` télécharge d'abord le chargeur Vulkan (`vulkan-1.dll`, signé LunarG, empreinte vérifiée)
+dans `src-tauri/vendor/` : il est livré à côté de l'exe pour que l'application démarre même sans pilote
+graphique. Le runtime C/C++ est lié statiquement (`.cargo/config.toml`) : rien à installer pour l'utilisateur.
 
 | Dossier | Rôle |
 |---|---|
@@ -187,7 +208,7 @@ texte dicté n'y figure jamais, sauf si `debug_log_text` est activé. Niveau ré
 - [x] Dictée de bout en bout : raccourci, micro, VAD, Whisper GPU, collage, sons, pilule flottante
 - [x] Fenêtre de paramètres (tous les réglages appliqués à chaud) et historique des dictées
 - [x] Interface en français et en anglais, mode « maintenir pour parler »
-- [ ] Assistant de premier lancement : détection du matériel et téléchargement des modèles
+- [x] Assistant de premier lancement : détection du matériel et téléchargement des modèles
 - [x] Installateurs Windows, macOS, Linux construits par GitHub Actions, mises à jour signées dans l'application
 - [ ] Signature des installeurs auprès de Windows et d'Apple (SmartScreen, Gatekeeper)
 

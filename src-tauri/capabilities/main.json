@@ -19,6 +19,8 @@
     "allow-download-model",
     "allow-cancel-download",
     "allow-benchmark",
+    "allow-hardware",
+    "allow-finish-onboarding",
     "allow-list-microphones",
     "allow-get-history",
     "allow-clear-history",

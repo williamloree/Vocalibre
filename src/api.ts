@@ -60,7 +60,7 @@ export type Settings = {
 export type Status = {
   state: AppState;
   lang: Lang;
-  model: { id: string; on_gpu: boolean; fell_back_to_cpu: boolean } | null;
+  model: { id: string; on_gpu: boolean; fell_back_to_cpu: boolean; gpu_name: string | null } | null;
   hotkey_error: string | null;
   models_dir: string;
   vad_file: string;
@@ -76,7 +76,7 @@ export type ModelEntry = {
   speed: number;
   accuracy: number;
   supports_prompt: boolean;
-  recommended_for: ("gpu" | "cpu_strong" | "cpu_weak")[];
+  recommended_for: HardwareClass[];
   installed: boolean;
   active: boolean;
   /** [bytes so far, total] while downloading. */
@@ -90,6 +90,14 @@ export type DownloadEvent = {
   total: number;
   done: boolean;
   error: string | null;
+};
+
+export type HardwareClass = "gpu" | "cpu_strong" | "cpu_weak";
+
+export type Hardware = {
+  gpus: { name: string; vram_mb: number; integrated: boolean }[];
+  cpu_threads: number;
+  class: HardwareClass;
 };
 
 export type BenchResult = { audio_ms: number; inference_ms: number; text: string };
@@ -119,6 +127,8 @@ export const api = {
   downloadModel: (id: string) => invoke<void>("download_model", { id }),
   cancelDownload: () => invoke<void>("cancel_download"),
   benchmark: () => invoke<BenchResult>("benchmark"),
+  hardware: () => invoke<Hardware>("hardware"),
+  finishOnboarding: () => invoke<void>("finish_onboarding"),
   microphones: () => invoke<MicInfo[]>("list_microphones"),
   history: () => invoke<HistoryEntry[]>("get_history"),
   clearHistory: () => invoke<void>("clear_history"),

@@ -578,3 +578,93 @@ a {
     transition: none;
   }
 }
+
+.welcome {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 24px 24px 32px;
+}
+
+.welcome > header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.welcome > header h1 {
+  flex: 1;
+  margin: 0;
+}
+
+.steps {
+  display: flex;
+  gap: 16px;
+  margin: 16px 0;
+  padding: 0;
+  list-style: none;
+  color: var(--muted);
+}
+
+.steps .current {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+}
+
+.choices {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0;
+}
+
+.choice {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.choice.selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.choice input {
+  grid-row: span 2;
+  align-self: center;
+}
+
+.choice-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+}
+
+.choice .hint {
+  margin: 0;
+}
+
+.keys {
+  margin: 8px 0;
+  padding-left: 18px;
+}
+
+kbd {
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 12.5px;
+}

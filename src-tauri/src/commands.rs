@@ -8,6 +8,7 @@ use tokio::sync::oneshot;
 
 use crate::app::actor::{ActorTx, BenchResult, ModelEntry, Msg, Status};
 use crate::audio::{self, MicInfo};
+use crate::hardware::{self, Hardware};
 use crate::history::Entry;
 use crate::i18n::{self, Lang};
 use crate::settings::Settings;
@@ -87,6 +88,19 @@ pub fn cancel_download(tx: State<'_, ActorTx>) -> Result<(), String> {
 #[tauri::command]
 pub async fn benchmark(tx: State<'_, ActorTx>) -> Result<BenchResult, String> {
     ask(&tx, Msg::Benchmark).await?
+}
+
+#[tauri::command]
+pub async fn hardware() -> Result<Hardware, String> {
+    // The first call initialises Vulkan: keep it off the runtime.
+    tokio::task::spawn_blocking(|| hardware::detect().clone())
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn finish_onboarding(tx: State<'_, ActorTx>) -> Result<(), String> {
+    tell(&tx, Msg::FinishOnboarding)
 }
 
 #[tauri::command]

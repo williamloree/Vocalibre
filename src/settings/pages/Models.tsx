@@ -19,7 +19,7 @@ function Dots({ value }: { value: number }) {
 type Progress = { downloaded: number; total: number; since: number; from: number };
 
 /** Translated text for a download error code (`code:detail`). */
-function useDownloadError() {
+export function useDownloadError() {
   const { t } = useTranslation();
   return (raw: string) => {
     const [code, ...rest] = raw.split(":");
@@ -39,14 +39,12 @@ function useDownloadError() {
   };
 }
 
-export function Models() {
-  const { t, i18n } = useTranslation();
-  const { status, showError } = useStore();
+/** The model list, kept up to date, with the downloads in progress. */
+export function useModels() {
+  const { showError } = useStore();
   const [models, setModels] = useState<ModelEntry[]>([]);
-  const [bench, setBench] = useState<BenchResult | "running" | null>(null);
   const [progress, setProgress] = useState<Record<string, Progress>>({});
   const [failed, setFailed] = useState<Record<string, string>>({});
-  const downloadError = useDownloadError();
 
   useEffect(() => {
     const refresh = () =>
@@ -90,9 +88,22 @@ export function Models() {
     });
   };
   const anyDownload = Object.keys(progress).length > 0;
+  return { models, progress, failed, download, anyDownload };
+}
 
-  const num = (n: number, digits = 2) =>
-    n.toLocaleString(i18n.language, { maximumFractionDigits: digits });
+/** Formats a number in the interface language. */
+export function useNum() {
+  const { i18n } = useTranslation();
+  return (n: number, digits = 2) => n.toLocaleString(i18n.language, { maximumFractionDigits: digits });
+}
+
+export function Models() {
+  const { t } = useTranslation();
+  const { status, showError } = useStore();
+  const { models, progress, failed, download, anyDownload } = useModels();
+  const [bench, setBench] = useState<BenchResult | "running" | null>(null);
+  const downloadError = useDownloadError();
+  const num = useNum();
   const loading = status?.state.kind === "loading_model";
   const runBench = () => {
     setBench("running");
@@ -108,7 +119,10 @@ export function Models() {
         <p className="lead">
           {t("models.acceleration")} :{" "}
           {status?.model ? (
-            <strong>{status.model.on_gpu ? t("models.on_gpu") : t("models.on_cpu")}</strong>
+            <strong>
+              {status.model.on_gpu ? t("models.on_gpu") : t("models.on_cpu")}
+              {status.model.gpu_name && ` (${status.model.gpu_name})`}
+            </strong>
           ) : (
             t("models.none_loaded")
           )}
@@ -199,7 +213,7 @@ export function Models() {
   );
 }
 
-function DownloadProgress({ p, num }: { p: Progress; num: (n: number, digits?: number) => string }) {
+export function DownloadProgress({ p, num }: { p: Progress; num: (n: number, digits?: number) => string }) {
   const { t } = useTranslation();
   const seconds = (Date.now() - p.since) / 1000;
   const speed = seconds > 1 ? (p.downloaded - p.from) / seconds : 0;

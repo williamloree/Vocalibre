@@ -11,6 +11,7 @@ import { Injection } from "./pages/Injection";
 import { History } from "./pages/History";
 import { Advanced } from "./pages/Advanced";
 import { About } from "./pages/About";
+import { Welcome } from "./Welcome";
 
 const PAGES = {
   general: General,
@@ -24,10 +25,11 @@ const PAGES = {
   about: About,
 } satisfies Record<string, ComponentType>;
 
-type Page = keyof typeof PAGES;
+/** The welcome assistant takes the whole window, without the sidebar. */
+type Page = keyof typeof PAGES | "welcome";
 
 function isPage(p: string): p is Page {
-  return p in PAGES;
+  return p in PAGES || p === "welcome";
 }
 
 function pageFromHash(): Page {
@@ -59,6 +61,7 @@ function Layout() {
     window.history.replaceState(null, "", `#/${page}`);
   }, [page]);
 
+  if (page === "welcome") return <Welcome onDone={() => setPage("general")} />;
   const Current = PAGES[page];
   return (
     <div className="layout">
@@ -67,7 +70,7 @@ function Layout() {
           <img src="/logo.png" alt="" width={28} height={28} />
           <span>Vocalibre</span>
         </div>
-        {(Object.keys(PAGES) as Page[]).map((p) => (
+        {(Object.keys(PAGES) as (keyof typeof PAGES)[]).map((p) => (
           <button
             key={p}
             type="button"

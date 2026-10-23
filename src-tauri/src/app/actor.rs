@@ -70,6 +70,8 @@ pub trait Shell: Send + 'static {
     fn refresh(&self, view: &View<'_>);
     fn changed(&self, what: Changed);
     fn download(&self, event: &DownloadEvent);
+    /// First launch with no model: the welcome assistant.
+    fn open_welcome(&self);
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -77,6 +79,7 @@ pub struct ModelStatus {
     pub id: String,
     pub on_gpu: bool,
     pub fell_back_to_cpu: bool,
+    pub gpu_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -111,6 +114,7 @@ type Reply<T> = oneshot::Sender<T>;
 #[derive(Debug)]
 pub enum Msg {
     Input(Input),
+    FinishOnboarding,
     SelectModel(String),
     Loaded {
         model_id: String,
@@ -247,6 +251,9 @@ impl<S: Shell> Actor<S> {
         self.refresh_shell();
         self.shell.state_changed(self.machine.state());
         self.reload_if_pending().await;
+        if *self.machine.state() == AppState::Onboarding && !self.settings.onboarding_done {
+            self.shell.open_welcome();
+        }
         loop {
             tokio::select! {
                 Some(msg) = self.rx.recv() => self.on_msg(msg).await,
@@ -288,6 +295,11 @@ impl<S: Shell> Actor<S> {
             }
             Msg::SuspendHotkey(suspended) => self.shell.suspend_hotkey(suspended),
             Msg::PasteLast => self.paste_last().await,
+            Msg::FinishOnboarding => {
+                self.settings.onboarding_done = true;
+                self.save_settings();
+                self.shell.changed(Changed::Settings);
+            }
             Msg::CopyLast => {
                 if let Some(text) = self.last_text.clone() {
                     let injector = self.injector.clone();
@@ -383,6 +395,7 @@ impl<S: Shell> Actor<S> {
                     id: model_id.clone(),
                     on_gpu: info.on_gpu,
                     fell_back_to_cpu: info.fell_back_to_cpu,
+                    gpu_name: info.gpu_name,
                 });
                 if self.settings.active_model.as_deref() != Some(model_id.as_str()) {
                     self.settings.active_model = Some(model_id.clone());

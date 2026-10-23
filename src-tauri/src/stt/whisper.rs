@@ -7,6 +7,8 @@ use std::time::Instant;
 
 use serde::Serialize;
 use tokio::sync::oneshot;
+
+use crate::hardware;
 use whisper_rs::{
     FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, WhisperState,
     WhisperVadContext, WhisperVadContextParams, WhisperVadParams,
@@ -37,9 +39,12 @@ pub struct LoadRequest {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Loaded {
-    /// GPU was requested but loading on it failed: running on CPU.
+    /// GPU was requested but none is usable, or loading on it failed:
+    /// running on CPU.
     pub fell_back_to_cpu: bool,
     pub on_gpu: bool,
+    /// The GPU in use.
+    pub gpu_name: Option<String>,
     pub load_ms: u64,
 }
 
@@ -156,17 +161,21 @@ fn load(req: &LoadRequest) -> Result<(Engine, Loaded), SttError> {
         }
     }
     let t = Instant::now();
-    let (ctx, on_gpu, fell_back) = if req.use_gpu {
-        match context(req, true) {
-            Ok(ctx) => (ctx, true, false),
+    // Without a usable GPU, whisper.cpp would silently run on the CPU while
+    // asked for the GPU: ask for the CPU instead, so the settings fit it.
+    let hw = hardware::detect();
+    let gpu = if req.use_gpu { hw.best_gpu() } else { None };
+    let (ctx, gpu_name, fell_back) = match gpu {
+        Some(device) => match context(req, Some(device)) {
+            Ok(ctx) => (ctx, hw.gpus.get(device).map(|g| g.name.clone()), false),
             Err(e) => {
                 tracing::warn!("GPU load failed, falling back to CPU: {e}");
-                (context(req, false)?, false, true)
+                (context(req, None)?, None, true)
             }
-        }
-    } else {
-        (context(req, false)?, false, false)
+        },
+        None => (context(req, None)?, None, req.use_gpu),
     };
+    let on_gpu = gpu_name.is_some();
     let mut state = ctx
         .create_state()
         .map_err(|e| SttError::Load(e.to_string()))?;
@@ -184,6 +193,7 @@ fn load(req: &LoadRequest) -> Result<(Engine, Loaded), SttError> {
     let info = Loaded {
         fell_back_to_cpu: fell_back,
         on_gpu,
+        gpu_name,
         load_ms: t.elapsed().as_millis() as u64,
     };
     tracing::info!(model = %req.model_path.display(), ?info, "model loaded");
@@ -198,9 +208,13 @@ fn load(req: &LoadRequest) -> Result<(Engine, Loaded), SttError> {
     ))
 }
 
-fn context(req: &LoadRequest, gpu: bool) -> Result<WhisperContext, SttError> {
+/// `gpu`: whisper.cpp's `gpu_device`, `None` for the CPU.
+fn context(req: &LoadRequest, gpu: Option<usize>) -> Result<WhisperContext, SttError> {
     let mut params = WhisperContextParameters::default();
-    params.use_gpu(gpu).flash_attn(gpu);
+    params
+        .use_gpu(gpu.is_some())
+        .flash_attn(gpu.is_some())
+        .gpu_device(gpu.unwrap_or(0) as i32);
     WhisperContext::new_with_params(&req.model_path, params)
         .map_err(|e| SttError::Load(e.to_string()))
 }

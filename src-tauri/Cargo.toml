@@ -38,6 +38,9 @@ enigo = "=0.6.1"
 rodio = { version = "=0.23.0", default-features = false, features = ["playback", "wav"] }
 tracing-subscriber = { version = "=0.3.23", features = ["env-filter", "fmt"] }
 tracing-appender = "=0.2.5"
+# Device listing (ggml API, not wrapped by whisper-rs). Same version as
+# whisper-rs uses, so its features (vulkan, metal) apply.
+whisper-rs-sys = "=0.15.0"
 
 [build-dependencies]
 tauri-build = { version = "=2.7.4", features = [] }

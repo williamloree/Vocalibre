@@ -13,6 +13,8 @@ const COMMANDS: &[&str] = &[
     "download_model",
     "cancel_download",
     "benchmark",
+    "hardware",
+    "finish_onboarding",
     "list_microphones",
     "get_history",
     "clear_history",

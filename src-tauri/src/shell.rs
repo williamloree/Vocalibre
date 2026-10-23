@@ -394,6 +394,10 @@ impl Shell for TauriShell {
     fn download(&self, event: &DownloadEvent) {
         let _ = self.app.emit_to(MAIN, "download", event);
     }
+
+    fn open_welcome(&self) {
+        open_main(&self.app, "welcome");
+    }
 }
 
 fn build_menu(app: &AppHandle, view: &View<'_>) -> tauri::Result<(Menu<Wry>, TrayItems)> {
