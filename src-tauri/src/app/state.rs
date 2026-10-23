@@ -79,6 +79,8 @@ pub enum Input {
     NoModel,
     TranscriptionFinished {
         job_id: u64,
+        /// Something was injected (no "done" sound for an empty result).
+        has_text: bool,
     },
     TranscriptionFailed {
         job_id: u64,
@@ -92,6 +94,8 @@ pub enum Sound {
     Start,
     Stop,
     Cancel,
+    /// Text was transcribed and injected.
+    Done,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -210,11 +214,22 @@ impl Machine {
             ),
 
             // Transcription results; stale job ids are ignored.
-            (S::Transcribing { job_id }, I::TranscriptionFinished { job_id: done }) => {
+            (
+                S::Transcribing { job_id },
+                I::TranscriptionFinished {
+                    job_id: done,
+                    has_text,
+                },
+            ) => {
                 if *job_id != done {
                     return Err(Ignored::StaleJob);
                 }
-                (S::Idle, vec![])
+                let effects = if has_text {
+                    vec![Effect::Play(Sound::Done)]
+                } else {
+                    vec![]
+                };
+                (S::Idle, effects)
             }
             (
                 S::Transcribing { job_id },
@@ -377,7 +392,10 @@ mod tests {
                 detail: "d".into(),
             },
             Input::NoModel,
-            Input::TranscriptionFinished { job_id: 1 },
+            Input::TranscriptionFinished {
+                job_id: 1,
+                has_text: true,
+            },
             Input::TranscriptionFailed {
                 job_id: 1,
                 detail: "d".into(),
@@ -477,8 +495,34 @@ mod tests {
                 Effect::Play(Sound::Stop)
             ]
         );
-        m.handle(Input::TranscriptionFinished { job_id: 1 }, 3_500, Toggle)
+        let fx = m
+            .handle(
+                Input::TranscriptionFinished {
+                    job_id: 1,
+                    has_text: true,
+                },
+                3_500,
+                Toggle,
+            )
             .unwrap();
+        assert_eq!(fx, vec![Effect::Play(Sound::Done)]);
+        assert_eq!(m.state(), &AppState::Idle);
+    }
+
+    #[test]
+    fn empty_transcription_plays_no_done_sound() {
+        let mut m = Machine::new(AppState::Transcribing { job_id: 1 });
+        let fx = m
+            .handle(
+                Input::TranscriptionFinished {
+                    job_id: 1,
+                    has_text: false,
+                },
+                0,
+                Toggle,
+            )
+            .unwrap();
+        assert!(fx.is_empty());
         assert_eq!(m.state(), &AppState::Idle);
     }
 
@@ -539,7 +583,14 @@ mod tests {
     fn stale_transcription_result_is_ignored() {
         let mut m = Machine::new(AppState::Transcribing { job_id: 2 });
         assert_eq!(
-            m.handle(Input::TranscriptionFinished { job_id: 1 }, 0, Toggle),
+            m.handle(
+                Input::TranscriptionFinished {
+                    job_id: 1,
+                    has_text: true
+                },
+                0,
+                Toggle
+            ),
             Err(Ignored::StaleJob)
         );
     }
@@ -553,7 +604,10 @@ mod tests {
             m.handle(Input::HotkeyPressed, t + 1_000, Toggle).unwrap();
             assert_eq!(m.state(), &AppState::Transcribing { job_id: expected });
             m.handle(
-                Input::TranscriptionFinished { job_id: expected },
+                Input::TranscriptionFinished {
+                    job_id: expected,
+                    has_text: true,
+                },
                 t + 2_000,
                 Toggle,
             )
