@@ -27,6 +27,13 @@ runs:
         choco install ninja -y --no-progress
         echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> "$GITHUB_ENV"
 
+    # Spotlight indexes the disk image the .dmg is built from, and hdiutil
+    # then fails to eject it ("Resource busy").
+    - name: macOS Spotlight off
+      if: runner.os == 'macOS'
+      shell: bash
+      run: sudo mdutil -a -i off
+
     - name: Vulkan SDK
       if: runner.os != 'macOS'
       uses: jakoch/install-vulkan-sdk-action@v1.7.0

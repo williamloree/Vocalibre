@@ -1,7 +1,7 @@
 # On every push to develop and every pull request: formatting, lints, tests,
 # then a build of the installers on the three systems (downloadable from the
-# run's page). main only receives commits already checked on develop, so
-# pushing both at once runs the checks once.
+# run's page). When everything passes on develop, main is fast-forwarded to
+# the same commit: main only ever holds commits checked here.
 name: CI
 
 on:
@@ -78,3 +78,18 @@ jobs:
             target/release/bundle/deb/*.deb
             target/release/bundle/appimage/*.AppImage
           if-no-files-found: error
+
+  promote:
+    name: Fast-forward main
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+      # Refused if main has commits develop does not: never rewrites main.
+      - name: Push develop to main
+        run: git push origin "$GITHUB_SHA:refs/heads/main"

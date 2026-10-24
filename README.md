@@ -197,7 +197,7 @@ passer sans avertissement.
 installeurs des trois systèmes, et publie la release avec le `latest.json` lu par les applications installées.
 Il a besoin des secrets `TAURI_SIGNING_PRIVATE_KEY` et `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Chaque push sur
 `develop` passe par [`ci.yml`](.github/workflows/ci.yml) : lint, tests et installeurs de test téléchargeables
-depuis la page du run.
+depuis la page du run ; quand tout est vert, `main` avance sur le même commit.
 
 **Journaux** : un fichier par jour, gardé 7 jours (*Paramètres* › *Avancé*). Le
 texte dicté n'y figure jamais, sauf si `debug_log_text` est activé. Niveau réglable avec `VOCALIBRE_LOG=debug`.
